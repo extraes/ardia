@@ -21,10 +21,10 @@ const GROW = springConfig({ response: 0.22, damping: 0.9 });
 const CLOSE_MS = 150;
 const EXPAND_MS = 170;
 
-let reduceMotion = false;
-AccessibilityInfo.isReduceMotionEnabled().then(
+let reduceMotion: boolean | null = null;
+const reduceMotionKnown = AccessibilityInfo.isReduceMotionEnabled().then(
   (on) => (reduceMotion = on),
-  () => {},
+  () => (reduceMotion = false),
 );
 AccessibilityInfo.addEventListener("reduceMotionChanged", (on) => (reduceMotion = on));
 
@@ -69,10 +69,11 @@ function PeekCard({
 }) {
   const theme = useTheme();
   const frame = peekFrame(width, height);
-  const [fade] = useState(() => reduceMotion);
+  const [motion, setMotion] = useState<"fade" | "grow" | null>(() => (reduceMotion === null ? null : reduceMotion ? "fade" : "grow"));
+  const fade = motion === "fade";
   const [progress] = useState(() => new Animated.Value(0));
   const [expand] = useState(() => new Animated.Value(0));
-  const leaving = useRef(false);
+  const leaving = useRef<"close" | "expand" | null>(null);
 
   const centerX = frame.left + frame.width / 2;
   const centerY = frame.top + frame.height / 2;
@@ -80,28 +81,36 @@ function PeekCard({
   const fromY = peek.from && origin ? Math.min(Math.max(peek.from.y - origin.y, 0), height) : centerY;
 
   useEffect(() => {
+    if (motion) return;
+    let live = true;
+    void reduceMotionKnown.then(() => live && setMotion(reduceMotion ? "fade" : "grow"));
+    return () => void (live = false);
+  }, []);
+
+  useEffect(() => {
+    if (!motion) return;
     const grow = fade
       ? Animated.timing(progress, { toValue: 1, duration: CLOSE_MS, easing: Easing.out(Easing.quad), useNativeDriver: true })
       : Animated.spring(progress, { toValue: 1, ...GROW, overshootClamping: true, restDisplacementThreshold: 0.001, restSpeedThreshold: 0.01, useNativeDriver: true });
     grow.start();
     const close = () => {
       if (leaving.current) return;
-      leaving.current = true;
+      leaving.current = "close";
       progress.stopAnimation();
       Animated.timing(progress, { toValue: 0, duration: CLOSE_MS, easing: Easing.in(Easing.cubic), useNativeDriver: true }).start(({ finished }) => {
         if (finished) finishPeek(windowId, peek.tabId);
       });
     };
     const grown = (done: () => void) => {
-      if (leaving.current) return;
-      leaving.current = true;
+      if (leaving.current === "expand") return;
+      leaving.current = "expand";
       progress.stopAnimation();
       progress.setValue(1);
       if (fade) return done();
       Animated.timing(expand, { toValue: 1, duration: EXPAND_MS, easing: Easing.out(Easing.cubic), useNativeDriver: true }).start(done);
     };
     return registerPeekMotion(windowId, close, grown);
-  }, []);
+  }, [motion]);
 
   const scaleX = fade
     ? 1

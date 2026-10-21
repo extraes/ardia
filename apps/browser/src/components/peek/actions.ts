@@ -58,7 +58,7 @@ export function openPeekInSplit(windowId: string) {
   if ((splitOf(s, peek.sourceId)?.tabIds.length ?? 0) >= MAX_SPLIT_PANES) {
     return showToast(windowId, "Cannot Add New Pane", `Split View can show up to ${MAX_SPLIT_PANES} tabs at once.`);
   }
-  const id = s.peekToTab(windowId, { background: true });
+  const id = s.peekToTab(windowId, { activate: false });
   if (!id) return;
   if (openSplitPane(windowId, { tabId: id, anchorTabId: peek.sourceId, side: "right" })) focusSoon(id);
   else store().activate(id);
@@ -67,7 +67,8 @@ export function openPeekInSplit(windowId: string) {
 export function closePeekOnEscape(tabId: string): boolean {
   const s = store();
   const tab = s.tabs[tabId];
-  if (!tab || !isPeekTab(s, tabId) || s.find[tabId]?.open || s.windowUi[tab.windowId]?.panel.open) return false;
+  const peek = tab ? s.peeks[tab.windowId] : undefined;
+  if (!tab || !peek || (peek.tabId !== tabId && peek.sourceId !== tabId) || s.find[tabId]?.open || s.windowUi[tab.windowId]?.panel.open) return false;
   dismissPeek(tab.windowId);
   return true;
 }

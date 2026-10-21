@@ -142,9 +142,7 @@ function environment() {
     send: (kind, data) => sent.push({ kind, ...data }),
     guard: (fn) =>
       function (...args) {
-        try {
-          return fn.apply(this, args);
-        } catch {}
+        return fn.apply(this, args);
       },
     handlers,
     window,

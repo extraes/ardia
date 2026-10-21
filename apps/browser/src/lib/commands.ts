@@ -21,7 +21,7 @@ import {
   switchProfile,
   toggleMute,
 } from "./actions";
-import { bookmarkActivePage, bookmarkAllTabs } from "../components/bookmarks/actions";
+import { bookmarkAllTabs, bookmarkTab } from "../components/bookmarks/actions";
 import { useClearDataRequest } from "../components/pages/ClearDataDialog";
 import { openInternalPage } from "../components/pages/urls";
 import { isUtilityWindowId, openImport, openSettings } from "../components/settings/windows";
@@ -244,9 +244,9 @@ export function runCommand({ command, arg, windowId: requested }: CommandEvent) 
     case "moveTabToWindow":
       return tab && arg ? moveTabToWindow(tab.id, arg) : undefined;
     case "bookmarkPage":
-      return page ? bookmarkActivePage(windowId) : undefined;
+      return page ? bookmarkTab(windowId, page.id) : undefined;
     case "addBookmarkToFolder":
-      return page && arg ? void addBookmarkToFolder(windowId, arg) : undefined;
+      return page && arg ? void addBookmarkToFolder(windowId, page.id, arg) : undefined;
     case "openBookmark": {
       const node = arg ? s.bookmarks.nodes[arg] : undefined;
       return node?.kind === "url" && tab ? s.navigate(tab.id, node.url) : undefined;
@@ -281,7 +281,7 @@ export function runCommand({ command, arg, windowId: requested }: CommandEvent) 
     case "pinExtensions":
       return openPinDialog(windowId);
     case "autofill":
-      return void requestAutofill(windowId, arg);
+      return void requestAutofill(windowId, arg, tabId);
     case "newProfile":
       return void createProfile(windowId).then((id) => id && switchProfile(windowId, id));
   }
@@ -321,10 +321,9 @@ function closeFind(tabId: string) {
   void webviews.get(tabId)?.focus();
 }
 
-async function addBookmarkToFolder(windowId: string, folder: string) {
+async function addBookmarkToFolder(windowId: string, tabId: string, folder: string) {
   const s = useBrowser.getState();
-  const tabId = activeTabId(s, windowId);
-  const tab = tabId ? s.tabs[tabId] : undefined;
+  const tab = s.tabs[tabId];
   if (!tab?.url) return;
   const profileId = bookmarkProfileId(s, s.windows[windowId]);
   let parentId = folder;

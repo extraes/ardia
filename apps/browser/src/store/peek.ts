@@ -14,7 +14,7 @@ export type PeekSlice = {
 
   openPeek(sourceTabId: string, url: string, from?: PeekPoint | null): string;
   closePeek(windowId: string): void;
-  peekToTab(windowId: string, options?: { background?: boolean }): string | undefined;
+  peekToTab(windowId: string, options?: { activate?: boolean }): string | undefined;
 };
 
 type PeekState = Pick<BrowserState, "peeks" | "tabs">;
@@ -83,13 +83,13 @@ export const createPeekSlice: StateCreator<BrowserState, [], [], PeekSlice> = (s
     if (s.peeks[windowId]) set(withoutPeek(s, windowId));
   },
 
-  peekToTab(windowId, { background = false } = {}) {
+  peekToTab(windowId, { activate = true } = {}) {
     let s = get();
     const peek = s.peeks[windowId];
     const tab = peek ? s.tabs[peek.tabId] : undefined;
     if (!peek || !tab || !s.windows[windowId]) return undefined;
     s = { ...s, peeks: without(s.peeks, [windowId]) };
-    if (!background) s = forgetOpeners(s, windowId);
+    if (activate) s = forgetOpeners(s, windowId);
     const loaded = !!tab.url && !!tab.navigation;
     const moved = { ...tab, openerId: s.tabs[peek.sourceId] ? peek.sourceId : null, navigation: loaded ? navigationTo(tab.url) : tab.navigation, lastActiveAt: Date.now() };
     const tabs = { ...s.tabs, [tab.id]: moved };
@@ -98,7 +98,7 @@ export const createPeekSlice: StateCreator<BrowserState, [], [], PeekSlice> = (s
     tabIds.splice(Math.min(insertionIndex({ ...s, tabs }, w, moved, false), tabIds.length), 0, tab.id);
     s = { ...s, tabs, windows: { ...s.windows, [windowId]: { ...w, tabIds: pinnedFirst(tabIds, tabs) } } };
     if (moved.openerId) s = groupWithOpener(s, tab.id, moved.openerId, false);
-    if (!background) s = apply(s, activated(s, tab.id));
+    if (activate) s = apply(s, activated(s, tab.id));
     set(s);
     return tab.id;
   },

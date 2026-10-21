@@ -77,7 +77,7 @@ function pinnedInsertionIndex(s: BrowserState, w: BrowserWindow): number {
 export function activated(s: BrowserState, id: string): Partial<BrowserState> {
   const tab = s.tabs[id];
   const w = tab && s.windows[tab.windowId];
-  if (!tab || !w) return {};
+  if (!tab || !w || s.peeks[w.id]?.tabId === id) return {};
   const lazy = !!tab.url && !tab.navigation && !tab.adoptId;
   const { unloaded: _, ...rest } = tab;
   const nextTab: Tab = { ...rest, lastActiveAt: Date.now(), ...(lazy ? wake(tab) : {}) };
@@ -315,6 +315,7 @@ export const createTabsSlice: StateCreator<BrowserState, [], [], TabsSlice> = (s
     const tab = s.tabs[id];
     const w = tab && s.windows[tab.windowId];
     if (!tab || !w) return;
+    if (s.peeks[w.id]?.tabId === id) return get().closePeek(w.id);
     if (inPinnedContainer(s, id)) return set(unloadPinnedTabs(s, [id]));
     if (closesWindow(s, id)) return get().closeWindow(w.id);
     set(removeTabs(s, [id], true));

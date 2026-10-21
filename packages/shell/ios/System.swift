@@ -219,14 +219,20 @@ enum HapticLog {
     return (dir as NSString).appendingPathComponent("haptics.log")
   }()
 
+  private static let queue = DispatchQueue(label: "ardia.haptic-log", qos: .utility)
+  private static let maxBytes: UInt64 = 64 * 1024
+
   static func note(_ pattern: String) {
-    guard let path, let line = "\(Date()) \(pattern)\n".data(using: .utf8) else { return }
-    if let file = FileHandle(forWritingAtPath: path) {
-      file.seekToEndOfFile()
-      file.write(line)
-      file.closeFile()
-    } else {
-      FileManager.default.createFile(atPath: path, contents: line)
+    guard let path else { return }
+    let line = "\(Date()) \(pattern)\n"
+    queue.async {
+      guard let data = line.data(using: .utf8) else { return }
+      guard let file = FileHandle(forWritingAtPath: path) else {
+        FileManager.default.createFile(atPath: path, contents: data)
+        return
+      }
+      defer { file.closeFile() }
+      if file.seekToEndOfFile() < maxBytes { file.write(data) }
     }
   }
 }

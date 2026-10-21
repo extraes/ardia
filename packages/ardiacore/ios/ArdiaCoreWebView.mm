@@ -6,6 +6,7 @@
 
 #import <IOKit/IOKitLib.h>
 #import <QuartzCore/QuartzCore.h>
+#import <Security/Security.h>
 #import <dlfcn.h>
 #import <objc/message.h>
 #import <objc/runtime.h>
@@ -248,6 +249,7 @@ static NSUInteger gPeekUpSeq = 0;
 static NSUInteger gPeekUsedSeq = 0;
 static BOOL gPeekPressedSinceUp = NO;
 static const CFTimeInterval kPeekGestureLifetime = 10;
+static const CFTimeInterval kPeekFallbackLifetime = 60;
 static char kScriptFramesKey;
 
 static ArdiaCoreWebView *PageViewUnder(NSEvent *event) {
@@ -1784,6 +1786,12 @@ void ArdiaCoreWebViewsSetFieldTiming(BOOL on) {
                                   timestamp:NSProcessInfo.processInfo.systemUptime windowNumber:window.windowNumber
                                     context:nil eventNumber:0 clickCount:1 pressure:0];
   [NSApp postEvent:up atStart:NO];
+  if ([keys containsString:@"+press"]) {
+    NSEvent *down = [NSEvent mouseEventWithType:NSEventTypeLeftMouseDown location:at modifierFlags:0
+                                      timestamp:NSProcessInfo.processInfo.systemUptime windowNumber:window.windowNumber
+                                        context:nil eventNumber:0 clickCount:1 pressure:1];
+    [NSApp postEvent:down atStart:NO];
+  }
   return YES;
 }
 
@@ -2138,7 +2146,8 @@ static NSMutableOrderedSet<NSString *> *ScriptFramesOf(ArdiaCoreTab *tab) {
   NSString *key = Text(dict, @"key", 8) ?: @"";
   const NSEventModifierFlags pageFlag = [key isEqualToString:@"alt"] ? NSEventModifierFlagOption : [key isEqualToString:@"shift"] ? NSEventModifierFlagShift : 0;
   NSString *scheme = (url.length ? [NSURL URLWithString:url].scheme.lowercaseString : nil) ?: @"";
-  const BOOL userClicked = test || (gPeekUpAt >= 0 && gPeekUpSeq != gPeekUsedSeq && gPeekUpView == self && gPeekUpKeys == pageFlag);
+  const BOOL fresh = gPeekUpAt >= 0 && CACurrentMediaTime() - gPeekUpAt <= kPeekFallbackLifetime && !gPeekPressedSinceUp;
+  const BOOL userClicked = test || (fresh && gPeekUpSeq != gPeekUsedSeq && gPeekUpView == self && gPeekUpKeys == pageFlag);
   const BOOL fallsBack = pageFlag && [@[ @"http", @"https" ] containsObject:scheme] && userClicked;
   NSString *origin = Text(dict, @"origin", 1024).lowercaseString;
   const BOOL sameOrigin = origin.length && [OriginOf(url).lowercaseString isEqualToString:origin];
