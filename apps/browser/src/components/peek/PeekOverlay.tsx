@@ -130,7 +130,7 @@ function PeekCard({
   const dim = Animated.multiply(progress, expand.interpolate({ inputRange: [0, 1], outputRange: [1, 0] }));
 
   return (
-    <View style={StyleSheet.absoluteFill} pointerEvents="box-none">
+    <View style={StyleSheet.absoluteFill} pointerEvents={motion ? "box-none" : "none"}>
       <Animated.View style={[StyleSheet.absoluteFill, { opacity: dim }]}>
         <Pressable
           accessibilityLabel="Close Peek"

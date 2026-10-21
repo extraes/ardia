@@ -702,7 +702,7 @@ typed (Dia), ⌃↩ adds www. and .com, ⌃⇧↩ the same in a new window (new)
 between links, and in text fields ⌥← / ⌥→, ⌥⌫, ⌘← / ⌘→ and ⌘A / ⌘C / ⌘V / ⌘X / ⌘Z stay the field's.
 
 **Mouse** (checked with CDP clicks on a link): ⌘-click → background tab, ⇧⌘-click → foreground tab, ⇧-click →
-Peek (Settings › Tabs › "Peek a link with"; with ⌥-click chosen there, or Off, ⇧-click opens a new window, a private one from a
+Peek for http(s) links without a `download` attribute (Settings › Tabs › "Peek a link with"; with ⌥-click chosen there, or Off, ⇧-click opens a new window, a private one from a
 private window), middle-click → background tab, ⌥-click → download (Peek when chosen), ⌥⌘-click (Chrome's) and ⌥⇧-click → split. ⌘-click Back / Forward → a new tab (§ Navigation).
 
 ## Menus

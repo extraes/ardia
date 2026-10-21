@@ -2,6 +2,7 @@ import { setPeekModifier } from "@ardia/ardiacore";
 import { hapticTick } from "@ardia/shell";
 import { webviews } from "../../lib/webviews";
 import { useBrowser, type BrowserState } from "../../store/browser";
+import { activeTabId } from "../../store/model";
 import { isPeekTab } from "../../store/peek";
 import { peekModifierOf, type PeekModifier } from "../../store/settings";
 import { MAX_SPLIT_PANES, splitOf } from "../../store/splits";
@@ -31,7 +32,6 @@ export function finishPeek(windowId: string, tabId: string) {
   const peek = store().peeks[windowId];
   if (!peek || peek.tabId !== tabId) return;
   store().closePeek(windowId);
-  void webviews.get(peek.sourceId)?.focus();
 }
 
 const focusSoon = (tabId: string) => setTimeout(() => void webviews.get(tabId)?.focus(), 50);
@@ -103,6 +103,15 @@ export function startPeeks() {
   sync();
   useBrowser.subscribe(sync);
   useBrowser.subscribe(bumpOnFirstLoad);
+  useBrowser.subscribe(refocusAfterClose);
+}
+
+function refocusAfterClose(s: BrowserState, prev: BrowserState) {
+  if (s.peeks === prev.peeks) return;
+  for (const [windowId, peek] of Object.entries(prev.peeks)) {
+    if (s.peeks[windowId]?.tabId === peek.tabId || s.tabs[peek.tabId]) continue;
+    if (s.tabs[peek.sourceId] && activeTabId(s, windowId) === peek.sourceId) void webviews.get(peek.sourceId)?.focus();
+  }
 }
 
 const loading = new Set<string>();
