@@ -57,6 +57,8 @@ import "./layout/devExpose";
 import { closeWebNotification, showWebNotification } from "../lib/webNotifications";
 import { isSmallWindow } from "../store/small";
 import { closeLittleArdiaOnEscape } from "./littleArdia/actions";
+import { PeekOverlay } from "./peek/PeekOverlay";
+import { closePeekOnEscape, startPeeks } from "./peek/actions";
 
 export function ContentCard() {
   const windowId = useWindowId();
@@ -76,6 +78,7 @@ export function ContentCard() {
   useEffect(startChromeTabs, []);
   useEffect(startMedia, []);
   useEffect(startSelectionTools, []);
+  useEffect(startPeeks, []);
 
   const mountedMemo = useRef<{ tabIds?: string[]; tabs?: object; ids: string[]; seen: (Tab | undefined)[]; wants: boolean[] }>({ ids: [], seen: [], wants: [] });
   const mounted = useBrowser(
@@ -262,6 +265,7 @@ export function ContentCard() {
         })}
       {split && !fullscreenTab && <SplitDividers split={split} dividers={dividers} width={size.width} height={size.height} />}
       {!fullscreenTab && <DropTargets panes={panes} origin={origin} />}
+      {!fullscreenTab && !small && <PeekOverlay windowId={windowId} width={size.width} height={size.height} origin={origin} page={peekPage} />}
       <SplitToast windowId={windowId} />
     </View>
   );
@@ -388,6 +392,8 @@ const TabPane = memo(function TabPane({
     </View>
   );
 });
+
+const peekPage = (tabId: string) => <TabWebView tabId={tabId} visible warm={false} />;
 
 const paneTab = (t: Tab | undefined) => ({ exists: !!t, url: t?.url ?? "", zoom: t?.zoom ?? 1 });
 const webViewTab = (t: Tab | undefined) => ({ navigation: t?.navigation, adoptId: t?.adoptId, profileId: t?.profileId ?? "", shownUrl: t?.url ?? "" });
@@ -564,7 +570,7 @@ const TabWebView = memo(function TabWebView({ tabId, visible, warm }: { tabId: s
         if (command === "search") searchSelection(tabId, text, modifiers);
         else if (command === "copyLinkToHighlight") void copyLinkToSelection(tabId);
         else if (command === "escape" && usePages.getState().popover[tabId]) setPopover(tabId, null);
-        else if (command === "escape") closeLittleArdiaOnEscape(tabId);
+        else if (command === "escape" && !closePeekOnEscape(tabId)) closeLittleArdiaOnEscape(tabId);
       }}
       onPageMessage={(kind, data) => {
         if (kind === "selection") setPageSelection(tabId, data as PageSelection | null);

@@ -3,12 +3,13 @@ import type { BrowserState } from "./browser";
 import { engineProfile, pinnedFirst } from "./model";
 import { forgetOpeners, switchKeepsOpeners } from "./openers";
 import { groupOf, placing, withGroup } from "./organize";
+import { isPeekTab } from "./peek";
 import { settleMovedPins } from "./pinMirror";
 import { splitOf } from "./splits";
 import { activated, apply, removeTabs } from "./tabs";
 
 type Keyed = StripTab & { key: string };
-const known = (s: BrowserState, t: StripTab | undefined): t is Keyed => !!t?.key && !!s.tabs[t.key];
+const known = (s: BrowserState, t: StripTab | undefined): t is Keyed => !!t?.key && !!s.tabs[t.key] && !isPeekTab(s, t.key);
 
 const madeByChrome = (s: BrowserState, key: string) => !!s.tabs[key]?.adoptId?.startsWith("tab:");
 

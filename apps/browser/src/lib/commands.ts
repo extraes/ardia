@@ -42,6 +42,8 @@ import { openProfileMenu } from "../components/ProfileIndicator";
 import { groupOf } from "../store/organize";
 import { isSmall, mainWindowFor, originalProfile } from "../store/small";
 import { closeLittleArdia, openInMainWindow, openLittleArdia } from "../components/littleArdia/actions";
+import { runPeekCommand } from "../components/peek/actions";
+import { peekTabId } from "../store/peek";
 
 export function runCommand({ command, arg, windowId: requested }: CommandEvent) {
   const s = useBrowser.getState();
@@ -51,6 +53,7 @@ export function runCommand({ command, arg, windowId: requested }: CommandEvent) 
     requested = null;
   }
   if (isSmall(s, requested) && runLittleArdiaCommand(command, requested!)) return;
+  if (runPeekCommand(command, resolveWindowId(s, requested) ?? "")) return;
 
   switch (command) {
     case "newWindow":
@@ -111,7 +114,7 @@ export function runCommand({ command, arg, windowId: requested }: CommandEvent) 
     }
     return;
   }
-  const tabId = activeTabId(s, windowId);
+  const tabId = (LITTLE_ARDIA_PAGE_COMMANDS.has(command) && peekTabId(s, windowId)) || activeTabId(s, windowId);
   const tab = tabId ? s.tabs[tabId] : undefined;
   const page = tab?.url ? tab : undefined;
   const web = tabId ? webviews.get(tabId) : undefined;

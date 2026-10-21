@@ -37,6 +37,7 @@ export type Settings = {
   extendWebsiteColor: boolean;
   cmdClickCreatesTabGroup: boolean;
   optShiftClickOpensInGroup: boolean;
+  peekModifier: PeekModifier;
   autoGroupMeetingTabs: boolean;
   cleanUpInactiveTabsAfterHours: number | null;
   mutedSites: string[];
@@ -69,6 +70,11 @@ export type Settings = {
   inferred?: string[];
 };
 
+export type PeekModifier = "alt" | "shift" | "off";
+export const PEEK_MODIFIERS: readonly PeekModifier[] = ["alt", "shift", "off"];
+export const peekModifierOf = (settings: Pick<Settings, "peekModifier">): PeekModifier =>
+  PEEK_MODIFIERS.includes(settings.peekModifier) ? settings.peekModifier : DEFAULT_SETTINGS.peekModifier;
+
 export const DEFAULT_PROFILE_ID = "default";
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -90,6 +96,7 @@ export const DEFAULT_SETTINGS: Settings = {
   extendWebsiteColor: true,
   cmdClickCreatesTabGroup: true,
   optShiftClickOpensInGroup: true,
+  peekModifier: "shift",
   autoGroupMeetingTabs: true,
   cleanUpInactiveTabsAfterHours: null,
   mutedSites: [],

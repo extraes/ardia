@@ -101,7 +101,10 @@ public class SystemModule: Module {
     }.runOnQueue(.main)
 
     Function("hapticTick") {
-      DispatchQueue.main.async { NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .now) }
+      DispatchQueue.main.async {
+        NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .now)
+        HapticLog.note("alignment")
+      }
     }
 
     AsyncFunction("menuShortcuts") { () -> [[String: Any]] in MainMenu.shortcutList() }.runOnQueue(.main)
@@ -206,5 +209,24 @@ final class FileDragView: ExpoView, NSDraggingSource {
 
   func draggingSession(_ session: NSDraggingSession, sourceOperationMaskFor context: NSDraggingContext) -> NSDragOperation {
     context == .outsideApplication ? [.copy, .generic] : []
+  }
+}
+
+enum HapticLog {
+  private static let path: String? = {
+    let env = ProcessInfo.processInfo.environment
+    guard env["ARDIA_BACKGROUND"] == "1", let dir = env["ARDIA_DATA_DIR"] else { return nil }
+    return (dir as NSString).appendingPathComponent("haptics.log")
+  }()
+
+  static func note(_ pattern: String) {
+    guard let path, let line = "\(Date()) \(pattern)\n".data(using: .utf8) else { return }
+    if let file = FileHandle(forWritingAtPath: path) {
+      file.seekToEndOfFile()
+      file.write(line)
+      file.closeFile()
+    } else {
+      FileManager.default.createFile(atPath: path, contents: line)
+    }
   }
 }
