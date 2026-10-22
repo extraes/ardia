@@ -62,7 +62,7 @@ import { closeWebNotification, showWebNotification } from "../lib/webNotificatio
 import { isSmallWindow } from "../store/small";
 import { closeLittleArdiaOnEscape } from "./littleArdia/actions";
 import { PeekOverlay } from "./peek/PeekOverlay";
-import { closePeekOnEscape, startPeeks } from "./peek/actions";
+import { closePeekOnEscape, dismissPeek, startPeeks } from "./peek/actions";
 
 export function ContentCard() {
   const windowId = useWindowId();
@@ -83,6 +83,9 @@ export function ContentCard() {
   useEffect(startMedia, []);
   useEffect(startSelectionTools, []);
   useEffect(startPeeks, []);
+  useEffect(() => {
+    if (fullscreenTab) dismissPeek(windowId);
+  }, [fullscreenTab, windowId]);
 
   const mountedMemo = useRef<{ tabIds?: string[]; tabs?: object; ids: string[]; seen: (Tab | undefined)[]; wants: boolean[] }>({ ids: [], seen: [], wants: [] });
   const mounted = useBrowser(
