@@ -194,7 +194,7 @@ function PeekBar({ windowId, tabId }: { windowId: string; tabId: string }) {
     >
       <Favicon url={tab.url} favicon={tab.favicon} profileId={tab.profileId} />
       <View style={{ flex: 1, flexDirection: "row", alignItems: "center" }}>
-        <Text numberOfLines={1} style={{ flexShrink: 0, maxWidth: "60%", fontSize: 13, fontWeight: "500", color: theme.textPrimary }}>
+        <Text accessible accessibilityLabel={host ? `Peek: ${host}` : "Peek"} numberOfLines={1} style={{ flexShrink: 0, maxWidth: "60%", fontSize: 13, fontWeight: "500", color: theme.textPrimary }}>
           {host}
         </Text>
         {title && title !== host ? <FadeLabel text={`  ${title}`} fontSize={13} color={theme.textSecondary} fadeWidth={14} style={{ flex: 1, height: 18 }} /> : null}
