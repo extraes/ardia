@@ -1,9 +1,11 @@
 import { showMenu, Surface, Symbol, type MenuItem } from "@ardia/shell";
-import { type ReactNode } from "react";
-import { Pressable, StyleSheet, Text, TextInput, View, type StyleProp, type ViewStyle } from "react-native";
+import { useEffect, useRef, type ReactNode, type Ref } from "react";
+import { Animated, Easing, Pressable, StyleSheet, Text, TextInput, View, type StyleProp, type ViewStyle } from "react-native";
 import { hex, useTheme, type Theme } from "../../lib/theme";
 import { Switch, switchEasing } from "../Switch";
 import { useHover } from "../primitives";
+import { registerAnchor, useSettingsSearch } from "./searchState";
+import { setting } from "./settingsIndex";
 
 function formColors(theme: Theme) {
   return theme.dark
@@ -21,6 +23,7 @@ function formColors(theme: Theme) {
         accent: "#0A84FF",
         destructive: "#FF453A",
         selected: "rgba(255,255,255,0.1)",
+        flash: "rgba(10,132,255,0.22)",
       }
     : {
         group: "rgba(0,0,0,0.028)",
@@ -36,6 +39,7 @@ function formColors(theme: Theme) {
         accent: "#007AFF",
         destructive: "#FF3B30",
         selected: "rgba(0,0,0,0.06)",
+        flash: "rgba(0,122,255,0.16)",
       };
 }
 
@@ -50,6 +54,7 @@ export function Toggle({ value, onChange, disabled }: { value: boolean; onChange
       value={value}
       onChange={onChange}
       disabled={disabled}
+      animateExternalChanges={false}
       look={{ width: 32, height: 18, knob: 15, inset: 1.5, offColor: colors.switchOff, onColor: colors.accent, knobBorder: "rgba(0,0,0,0.12)", duration: 160, easing: switchEasing.cubicOut }}
     />
   );
@@ -209,6 +214,9 @@ export function Button({
   );
 }
 
+const SEARCH_KEYS = [{ key: "Escape" }];
+const SEARCH_KEYS_WITH_ARROWS = [{ key: "Escape" }, { key: "Enter" }, { key: "ArrowUp" }, { key: "ArrowDown" }];
+
 export function SearchField({
   value,
   onChangeText,
@@ -217,6 +225,8 @@ export function SearchField({
   width,
   style,
   onSubmit,
+  onArrow,
+  inputRef,
 }: {
   value: string;
   onChangeText: (text: string) => void;
@@ -225,8 +235,9 @@ export function SearchField({
   width?: number;
   style?: StyleProp<ViewStyle>;
   onSubmit?: () => void;
+  onArrow?: (step: 1 | -1) => void;
+  inputRef?: Ref<TextInput>;
 }) {
-
   const theme = useTheme();
   const colors = useFormColors();
   return (
@@ -249,6 +260,7 @@ export function SearchField({
     >
       <Symbol name="magnifyingglass" size={12} color={theme.textSecondary} style={{ width: 14, height: 14 }} />
       <TextInput
+        ref={inputRef}
         value={value}
         onChangeText={onChangeText}
         placeholder={placeholder}
@@ -257,8 +269,14 @@ export function SearchField({
         autoFocus={autoFocus}
         enableFocusRing={false}
         onSubmitEditing={onSubmit}
-        keyDownEvents={[{ key: "Escape" }]}
-        onKeyDown={(e) => e.nativeEvent.key === "Escape" && onChangeText("")}
+        keyDownEvents={onArrow ? SEARCH_KEYS_WITH_ARROWS : SEARCH_KEYS}
+        onKeyDown={(e) => {
+          const key = e.nativeEvent.key;
+          if (key === "Escape") onChangeText("");
+          else if (key === "Enter" && onArrow) onSubmit?.();
+          else if (key === "ArrowDown") onArrow?.(1);
+          else if (key === "ArrowUp") onArrow?.(-1);
+        }}
         style={{ flex: 1, fontSize: 13, color: theme.textPrimary, paddingVertical: 0 }}
       />
       {value ? (
@@ -332,16 +350,58 @@ export function TextField({
   );
 }
 
-export function SectionHeader({ title, description, action }: { title: string; description?: string; action?: ReactNode }) {
-  const theme = useTheme();
+const FLASH_IN_MS = 120;
+const FLASH_HOLD_MS = 900;
+const FLASH_OUT_MS = 700;
+
+export function Anchor({ id, children, radius = 0, style }: { id?: string; children: ReactNode; radius?: number; style?: StyleProp<ViewStyle> }) {
+  const colors = useFormColors();
+  const ref = useRef<View>(null);
+  const flash = useSettingsSearch((s) => (id && s.flash?.id === id ? s.flash.at : 0));
+  const glow = useRef(new Animated.Value(0)).current;
+  useEffect(() => (id && ref.current ? registerAnchor(id, ref.current) : undefined), [id]);
+  useEffect(() => {
+    if (!flash) return;
+    glow.setValue(0);
+    const run = Animated.sequence([
+      Animated.timing(glow, { toValue: 1, duration: FLASH_IN_MS, easing: Easing.out(Easing.quad), useNativeDriver: true }),
+      Animated.delay(FLASH_HOLD_MS),
+      Animated.timing(glow, { toValue: 0, duration: FLASH_OUT_MS, easing: Easing.inOut(Easing.quad), useNativeDriver: true }),
+    ]);
+    run.start();
+    return () => run.stop();
+  }, [flash]);
+  if (!id) return <View style={style}>{children}</View>;
   return (
-    <View style={{ flexDirection: "row", alignItems: "flex-end", marginTop: 22, marginBottom: 8, paddingHorizontal: 2 }}>
+    <View ref={ref} collapsable={false} style={style}>
+      <Animated.View pointerEvents="none" style={[StyleSheet.absoluteFill, { borderRadius: radius, backgroundColor: colors.flash, opacity: glow }]} />
+      {children}
+    </View>
+  );
+}
+
+export function SectionHeader({
+  title,
+  description,
+  action,
+  anchor,
+}: {
+  title?: string;
+  description?: string;
+  action?: ReactNode;
+  anchor?: string;
+}) {
+  const theme = useTheme();
+  const entry = anchor ? setting(anchor) : undefined;
+  const text = title ?? entry?.section ?? "";
+  return (
+    <Anchor id={anchor} radius={6} style={{ flexDirection: "row", alignItems: "flex-end", marginTop: 22, marginBottom: 8, paddingHorizontal: 2 }}>
       <View style={{ flex: 1 }}>
-        <Text style={{ fontSize: 13, fontWeight: "600", color: theme.textPrimary }}>{title}</Text>
+        <Text style={{ fontSize: 13, fontWeight: "600", color: theme.textPrimary }}>{text}</Text>
         {description ? <Text style={{ fontSize: 12, marginTop: 3, color: theme.textSecondary, lineHeight: 16 }}>{description}</Text> : null}
       </View>
       {action}
-    </View>
+    </Anchor>
   );
 }
 
@@ -366,21 +426,26 @@ export function Group({ children, style }: { children: ReactNode; style?: StyleP
 }
 
 export function Row({
-  title,
-  description,
+  title: titleProp,
+  description: descriptionProp,
   children,
   icon,
   onPress,
+  anchor,
 }: {
-  title: ReactNode;
+  title?: ReactNode;
   description?: ReactNode;
   children?: ReactNode;
   icon?: ReactNode;
   onPress?: () => void;
+  anchor?: string;
 }) {
   const theme = useTheme();
   const colors = useFormColors();
   const { hovered, hoverProps } = useHover();
+  const entry = anchor ? setting(anchor) : undefined;
+  const title = titleProp ?? entry?.title;
+  const description = descriptionProp === undefined ? entry?.description : descriptionProp;
   const body = (
     <View
       style={{
@@ -408,12 +473,14 @@ export function Row({
       {onPress && <Symbol name="chevron.right" size={11} weight="semibold" color={theme.textTertiary} style={{ width: 12, height: 14 }} />}
     </View>
   );
-  if (!onPress) return body;
-  return (
+  const row = onPress ? (
     <View {...hoverProps}>
       <Pressable onPress={onPress}>{body}</Pressable>
     </View>
+  ) : (
+    body
   );
+  return anchor ? <Anchor id={anchor}>{row}</Anchor> : row;
 }
 
 export function Sheet({ width = 440, onClose, children }: { width?: number; onClose: () => void; children: ReactNode }) {

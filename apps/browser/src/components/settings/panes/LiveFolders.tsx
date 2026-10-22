@@ -22,6 +22,14 @@ const DESCRIPTIONS: Record<LiveSourceId, string> = {
   gdrive: "Documents recently changed in your Drive.",
 };
 
+const ANCHORS: Record<LiveSourceId, string> = {
+  github: "liveFolders.github",
+  bitbucket: "liveFolders.bitbucket",
+  notion: "liveFolders.notion",
+  confluence: "liveFolders.confluence",
+  gdrive: "liveFolders.gdrive",
+};
+
 export function LiveFoldersPane() {
   const folders = useLive(useShallow((s) => s.folderOrder.map((id) => s.folders[id]!).filter(Boolean)));
   const profiles = useBrowser((s) => s.profiles);
@@ -29,7 +37,7 @@ export function LiveFoldersPane() {
   return (
     <View>
       <SectionHeader
-        title="Live folders"
+        anchor="liveFolders.folders"
         description="Right-click empty space in the sidebar and choose New Live Folder to add one. Live folders refresh every few minutes; items open as tabs that stay in the folder."
       />
       {folders.length ? (
@@ -72,6 +80,7 @@ function SourceRow({ id }: { id: LiveSourceId }) {
   const source = SOURCES[id];
   return (
     <Row
+      anchor={ANCHORS[id]}
       icon={<Favicon url={source.site} size={18} />}
       title={source.name}
       description={account ? `Connected as ${connectedAs(id, account)}` : DESCRIPTIONS[id]}

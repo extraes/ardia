@@ -8,7 +8,9 @@ to build without it. The same file ends up in three places:
   newest first. The app opens that anchor in a new tab the first time it launches after an update, and from
   Help › Release Notes. The page only shows a version once the site is rebuilt and deployed.
 - **The GitHub release**: `release.sh` writes `dist/<version>/release-notes.md` (the body, then the standard
-  Install section and a link to the page) for `gh release create --notes-file`.
+  Install section, a link to the page, and a Source section linking this version's tag) for
+  `gh release create --notes-file`. Don't write a Source line in the notes file: `release.sh` adds it to every release
+  (`docs/releasing.md` › Source and licenses).
 - **The update dialog**: `release.sh` embeds the headline and body in the appcast item, so Sparkle's
   "A new version is available" window shows them (it renders the Markdown).
 

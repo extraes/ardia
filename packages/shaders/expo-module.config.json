@@ -6,7 +6,8 @@
     "modules": [
       "AreaLightModule",
       "WindowBackdropModule",
-      "PowerUpModule"
+      "PowerUpModule",
+      "ThemeSwatchModule"
     ]
   }
 }

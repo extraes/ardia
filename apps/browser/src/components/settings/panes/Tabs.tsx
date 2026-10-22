@@ -22,8 +22,8 @@ const CLEAN_UP = [
 export function TabsPane() {
   const settings = useBrowser((s) => s.settings);
   const update = useBrowser((s) => s.updateSettings);
-  const toggle = (key: keyof Settings, title: string, description?: string) => (
-    <Row key={key} title={title} description={description}>
+  const toggle = (key: keyof Settings, anchor: string) => (
+    <Row key={key} anchor={anchor}>
       <Toggle value={!!settings[key]} onChange={(v) => update({ [key]: v })} />
     </Row>
   );
@@ -31,56 +31,52 @@ export function TabsPane() {
 
   return (
     <View>
-      <SectionHeader title="Tab layout" />
+      <SectionHeader anchor="tabs.layout" />
       <View style={{ flexDirection: "row", gap: 14 }}>
         <LayoutChoice layout="sidebar" title="Tab layout in the sidebar" selected={!top} />
         <LayoutChoice layout="top" title="Tab layout across the top of the window" selected={top} />
       </View>
       <Group style={{ marginTop: 14 }}>
-        {toggle(
-          "hideToolbarWhileScrolling",
-          "Hide toolbar while scrolling",
-          "Scrolling down tucks the toolbar into a thin strip with the site's name. Scroll up, or click the strip, to bring it back.",
-        )}
-        {!top && toggle("showSidebarButton", "Show sidebar button", "⌘S and View › Auto-Hide Tabs still hide and show the sidebar.")}
+        {toggle("hideToolbarWhileScrolling", "tabs.hideToolbarWhileScrolling")}
+        {!top && toggle("showSidebarButton", "tabs.showSidebarButton")}
       </Group>
 
       <SectionHeader title="General" />
       <Group>
-        <Row title={top ? "Add new tabs to the left" : "Add new tabs to the top"}>
+        <Row anchor="tabs.newTabOpens">
+          <PopUp
+            value={settings.newTabOpens}
+            options={[
+              { value: "page", title: "New Tab Page" },
+              { value: "commandBar", title: "Command Bar" },
+            ]}
+            onChange={(v) => update({ newTabOpens: v })}
+            minWidth={160}
+          />
+        </Row>
+        <Row anchor="tabs.newTabPosition" title={top ? "Add new tabs to the left" : "Add new tabs to the top"}>
           <Toggle value={settings.newTabPosition === "top"} onChange={(v) => update({ newTabPosition: v ? "top" : "bottom" })} />
         </Row>
-        {toggle("warnBeforeClosingLastTab", "Warn before closing last tab in a Profile")}
-        {toggle("tabReorderHaptics", "Haptic feedback when reordering tabs")}
-        {toggle("extendWebsiteColor", "Extend website color into tab bar")}
-        {toggle(
-          "sidebarMediaControls",
-          "Show media controls in the sidebar",
-          "When a tab you're not looking at plays sound, a player appears at the bottom of the sidebar. Pinned tabs that are playing show one when you hover them.",
-        )}
-        {toggle("autoPictureInPicture", "Automatic Picture in Picture", "A video or call you're watching pops out when you switch tabs or leave the window, and returns when you come back.")}
-        {toggle(
-          "videoUpscaling",
-          "Video upscaling",
-          "Sharpens low-resolution videos shown larger than they are, on Apple silicon. Only in the tab you're watching, never in the background, in Low Power Mode or when the Mac runs hot.",
-        )}
+        {toggle("warnBeforeClosingLastTab", "tabs.warnBeforeClosingLastTab")}
+        {toggle("tabReorderHaptics", "tabs.tabReorderHaptics")}
+        {toggle("extendWebsiteColor", "tabs.extendWebsiteColor")}
+        {toggle("sidebarMediaControls", "tabs.sidebarMediaControls")}
+        {toggle("autoPictureInPicture", "tabs.autoPictureInPicture")}
+        {toggle("videoUpscaling", "tabs.videoUpscaling")}
       </Group>
 
       <SectionHeader title="Links" />
       <Group>
-        <Row
-          title="Peek a link with"
-          description="Opens the link in a preview over the page. Open as Tab or Split View keeps it; Esc closes it. ⌥⇧-click still opens a split."
-        >
+        <Row anchor="tabs.peekModifier">
           <PopUp value={peekModifierOf(settings)} options={PEEK_WITH} onChange={(peekModifier) => update({ peekModifier })} />
         </Row>
       </Group>
 
       <SectionHeader title="Tab groups" />
       <Group>
-        {toggle("cmdClickCreatesTabGroup", "⌘-clicking links creates tab groups")}
-        {toggle("optShiftClickOpensInGroup", "⌥⇧-click opens tab in group", "⌥⇧-click a tab to open it in a group with the current tab. (⌥⇧-clicking a link opens it in a split.)")}
-        {toggle("autoGroupMeetingTabs", "Automatically group tabs for meetings")}
+        {toggle("cmdClickCreatesTabGroup", "tabs.cmdClickCreatesTabGroup")}
+        {toggle("optShiftClickOpensInGroup", "tabs.optShiftClickOpensInGroup")}
+        {toggle("autoGroupMeetingTabs", "tabs.autoGroupMeetingTabs")}
       </Group>
 
       <SectionHeader
@@ -88,7 +84,7 @@ export function TabsPane() {
         description="Closes tabs you haven't used (and duplicates) automatically, like the tab menu's Clean Up Daily. Pinned, playing and selected tabs stay; cleaned tabs are listed under Recently Cleaned."
       />
       <Group>
-        <Row title={<Checkbox value={settings.cleanUpInactiveTabsAfterHours !== null} onChange={(v) => update({ cleanUpInactiveTabsAfterHours: v ? 24 : null })} label="Clean up tabs I haven't used in:" />}>
+        <Row anchor="tabs.cleanUp" description={null} title={<Checkbox value={settings.cleanUpInactiveTabsAfterHours !== null} onChange={(v) => update({ cleanUpInactiveTabsAfterHours: v ? 24 : null })} label="Clean up tabs I haven't used in:" />}>
           <PopUp
             value={String(settings.cleanUpInactiveTabsAfterHours ?? 24)}
             options={CLEAN_UP}

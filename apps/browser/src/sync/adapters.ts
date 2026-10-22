@@ -1,5 +1,5 @@
 import { addHistoryVisits, deleteHistoryUrls, deletePassword, savePassword } from "@ardia/ardiacore";
-import { assignPositions, SyncNative, type Adapter, type Extraction, type SavedLogin } from "@ardia/sync";
+import { assignPositions, canonical, SyncNative, type Adapter, type Extraction, type SavedLogin } from "@ardia/sync";
 import { bookmarkUuidFor, ensureRoots, isBookmarkUuid } from "../store/bookmarks";
 import { MAX_HISTORY, MAX_VISIT_TIMES } from "../store/history";
 import { useBrowser, type BrowserState } from "../store/browser";
@@ -11,7 +11,8 @@ import { isPeekTab } from "../store/peek";
 import { pinKeyOf } from "../store/pinMirror";
 import { removeTabs } from "../store/tabs";
 import { DEFAULT_PROFILE_ID, DEFAULT_SETTINGS, type Settings } from "../store/settings";
-import type { BookmarkNode, HistoryEntry, Profile, Tab, TabGroup } from "../store/types";
+import { sanitizeTheme } from "../lib/profileTheme";
+import type { BookmarkNode, HistoryEntry, Profile, ProfileTheme, Tab, TabGroup } from "../store/types";
 
 const store = () => useBrowser.getState();
 
@@ -27,6 +28,7 @@ export const SYNCED_SETTINGS = [
   "hideToolbarWhileScrolling",
   "showSidebarButton",
   "newTabPosition",
+  "newTabOpens",
   "warnBeforeClosingLastTab",
   "warnBeforeMovingTabsToProfile",
   "tabReorderHaptics",
@@ -81,29 +83,113 @@ export const settingsAdapter: Adapter = {
   },
 };
 
-export type ProfileRecord = { n: string; c: Profile["color"]; i: string | null; d?: true };
+export type ProfileRecord = { n: string; c: Profile["color"]; i: string | null; d?: true; th?: ProfileTheme | null };
+
+export type ProfileThemeRecord = { t: ProfileTheme } | { preset: true };
+
+export function themeFromRecord(record: unknown): Pick<Profile, "theme"> | null {
+  if (!record || typeof record !== "object") return null;
+  if ("preset" in record && record.preset === true) return { theme: null };
+  const theme = "t" in record ? sanitizeTheme(record.t) : null;
+  return theme ? { theme } : null;
+}
+
+export function legacyThemeOf(record: ProfileRecord): Pick<Profile, "theme"> | null {
+  const theme = record.th ? sanitizeTheme(record.th) : null;
+  return theme ? { theme } : null;
+}
 
 export function profilesAdapter(links: () => Record<string, { syncId: string }>): Adapter {
   const linked = () => Object.entries(links()).filter(([id]) => store().profiles[id]);
   return {
     prefix: "prof:",
     adoptRemoteOnJoin: true,
-    extract: () => {
+    extract: (_base, _queued, _now, known) => {
       const values = new Map<string, unknown>();
+      const all = links();
       for (const [id, { syncId }] of linked()) {
         const p = store().profiles[id]!;
-        values.set(`prof:${syncId}`, { n: p.name, c: p.color, i: p.icon, ...(id === DEFAULT_PROFILE_ID ? { d: true } : {}) } satisfies ProfileRecord);
+        const sharesSyncedData = !!p.dataId && p.dataId !== id && !!all[p.dataId] && !!store().profiles[p.dataId];
+        if (sharesSyncedData && !known(`share:${syncId}`)) continue;
+        values.set(`prof:${syncId}`, {
+          n: p.name,
+          c: p.color,
+          i: p.icon,
+          ...(id === DEFAULT_PROFILE_ID ? { d: true } : {}),
+        } satisfies ProfileRecord);
+      }
+      const mine = new Set(values.keys());
+      return { values, ignore: (key) => !mine.has(key) };
+    },
+    apply: (visible, changed, _base, records) => {
+      for (const [id, { syncId }] of linked()) {
+        const record = visible.get(`prof:${syncId}`) as ProfileRecord | undefined;
+        if (!record || !changed.has(`prof:${syncId}`)) continue;
+        const legacy = store().profiles[id]!.theme === undefined && !records.known(`pth:${syncId}`) ? legacyThemeOf(record) : null;
+        store().updateProfile(id, { name: record.n, color: record.c, icon: record.i, ...legacy });
+      }
+    },
+  };
+}
+
+export function profileThemesAdapter(
+  links: () => Record<string, { syncId: string; themeAdopting?: true }>,
+  records: () => Record<string, { v: unknown }> | undefined,
+  adopted: (profileId: string) => void = () => {},
+): Adapter {
+  const linked = () => Object.entries(links()).filter(([id]) => store().profiles[id]);
+  const unapplied = (key: string, base: (key: string) => unknown) => {
+    const record = records()?.[key];
+    return !!record && record.v !== null && canonical(record.v) !== canonical(base(key) ?? null);
+  };
+  return {
+    prefix: "pth:",
+    adoptRemoteOnJoin: true,
+    extract: (base) => {
+      const values = new Map<string, unknown>();
+      for (const [id, { syncId, themeAdopting }] of linked()) {
+        const theme = store().profiles[id]!.theme;
+        const key = `pth:${syncId}`;
+        if (theme === undefined || themeAdopting || unapplied(key, base)) continue;
+        values.set(key, (theme ? { t: theme } : { preset: true }) satisfies ProfileThemeRecord);
       }
       const mine = new Set(values.keys());
       return { values, ignore: (key) => !mine.has(key) };
     },
     apply: (visible, changed) => {
       for (const [id, { syncId }] of linked()) {
-        const record = visible.get(`prof:${syncId}`) as ProfileRecord | undefined;
-        if (!record || !changed.has(`prof:${syncId}`)) continue;
-        store().updateProfile(id, { name: record.n, color: record.c, icon: record.i });
+        if (!changed.has(`pth:${syncId}`)) continue;
+        const patch = themeFromRecord(visible.get(`pth:${syncId}`));
+        if (!patch) continue;
+        store().updateProfile(id, patch);
+        adopted(id);
       }
     },
+  };
+}
+
+export type ShareRecord = { o: string };
+
+type ShareLink = { syncId: string; enabled: boolean; retire?: boolean };
+
+export function sharedDataAdapter(links: () => Record<string, ShareLink>): Adapter {
+  return {
+    prefix: "share:",
+    adoptRemoteOnJoin: true,
+    publishAfterPull: true,
+    extract: (_base, _queued, _now, known) => {
+      const all = links();
+      const synced = (id: string) => !!store().profiles[id] && !!all[id]?.enabled && !all[id]?.retire;
+      const values = new Map<string, unknown>();
+      for (const [id, link] of Object.entries(all)) {
+        const ownerId = store().profiles[id]?.dataId;
+        if (!synced(id) || !ownerId || ownerId === id || !synced(ownerId)) continue;
+        const key = `share:${link.syncId}`;
+        if (!known(key)) values.set(key, { o: all[ownerId]!.syncId } satisfies ShareRecord);
+      }
+      return { values, ignore: (key) => !values.has(key) };
+    },
+    apply: () => true,
   };
 }
 

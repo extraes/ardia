@@ -1,10 +1,6 @@
 import {
   clearSiteData,
-  getContentBlocker,
-  getExternalAppAllowances,
   getSiteSettings,
-  getSiteSettingsOrigins,
-  getZoomLevels,
   onContentBlockerChange,
   removeExternalAppAllowance,
   resetSiteSettings,
@@ -14,7 +10,6 @@ import {
   setSiteSetting,
   setZoom,
   type ContentBlockerState,
-  type ExternalAppAllowance,
   type FilterList,
   type FilterListCategory,
   type SiteSettings,
@@ -30,13 +25,15 @@ import { useProfiles } from "../../../store/hooks";
 import { engineProfile } from "../../../store/model";
 import { Favicon } from "../../primitives";
 import { Button, Checkbox, Group, PopUp, Row, SectionHeader, Sheet, Toggle } from "../controls";
+import { appLinks, contentBlocker, siteOrigins, zoomLevels } from "../paneData";
+import { useResource } from "../resources";
 import { closeSettingsSheet, showSettingsSheet } from "../sheet";
 import { ShareDiagnosticsSection } from "./ShareDiagnostics";
 
-const CATEGORIES: { id: FilterListCategory; toggle: string; section: string }[] = [
-  { id: "ads", toggle: "Block ads", section: "Ad blockers" },
-  { id: "trackers", toggle: "Block trackers", section: "Trackers" },
-  { id: "cookies", toggle: "Block cookie banners", section: "Cookie banners" },
+const CATEGORIES: { id: FilterListCategory; toggle: string; section: string; anchor?: string }[] = [
+  { id: "ads", toggle: "Block ads", section: "Ad blockers", anchor: "privacy.blockAds" },
+  { id: "trackers", toggle: "Block trackers", section: "Trackers", anchor: "privacy.blockTrackers" },
+  { id: "cookies", toggle: "Block cookie banners", section: "Cookie banners", anchor: "privacy.blockCookieBanners" },
   { id: "annoyances", toggle: "", section: "Annoyances" },
   { id: "security", toggle: "", section: "Malware and scams" },
   { id: "regional", toggle: "", section: "Regional blockers" },
@@ -45,14 +42,13 @@ const CATEGORIES: { id: FilterListCategory; toggle: string; section: string }[] 
 const filtersText = (n: number) => `${n.toLocaleString()} ${n === 1 ? "filter" : "filters"}`;
 
 function useContentBlocker() {
-  const [state, setState] = useState<ContentBlockerState | null>(null);
-  const refresh = () => void getContentBlocker().then(setState).catch(() => {});
+  const [state, reload] = useResource(contentBlocker);
+  const refresh = () => void reload();
   useEffect(() => {
-    refresh();
     const sub = onContentBlockerChange(refresh);
     return () => sub.remove();
   }, []);
-  return [state, refresh] as const;
+  return [state ?? null, refresh] as const;
 }
 
 const categoryOn = (s: ContentBlockerState, c: FilterListCategory) => s.enabled && s.lists.some((l) => l.category === c && l.enabled);
@@ -78,7 +74,7 @@ export function PrivacyPane() {
         message: "Ardia's Ad Blocker hides ads so pages load faster and feel cleaner.",
         confirmTitle: "Turn Off",
       });
-      if (!confirmed) return;
+      if (!confirmed) return refresh();
     }
     try {
       await setCategory(blocker, c, on);
@@ -92,11 +88,11 @@ export function PrivacyPane() {
       <SectionHeader title="Content blocking" description="Built on EasyList and EasyPrivacy. Blocking happens on this Mac." />
       <Group>
         {CATEGORIES.filter((c) => c.toggle).map((c) => (
-          <Row key={c.id} title={c.toggle}>
+          <Row key={c.id} anchor={c.anchor} title={c.toggle}>
             <Toggle value={!!blocker && categoryOn(blocker, c.id)} disabled={!blocker} onChange={(v) => void toggleCategory(c.id, v)} />
           </Row>
         ))}
-        <Row title="Advanced Settings" description="Block common components found across the web by using additional rules and filters.">
+        <Row anchor="privacy.filterLists">
           <Button title="Advanced…" disabled={!blocker} onPress={() => showSettingsSheet(<FilterListsSheet />)} />
         </Row>
       </Group>
@@ -179,9 +175,9 @@ function ZoomLevels() {
   const profileId = useBrowser((s) => s.settings.defaultProfileId);
   const profiles = useProfiles();
   const [selected, setSelected] = useState(profileId);
-  const [levels, setLevels] = useState<Record<string, number>>({});
-  const load = () => void getZoomLevels(engineProfile(selected)).then(setLevels).catch(() => {});
-  useEffect(load, [selected]);
+  const [loaded, reload] = useResource(zoomLevels, engineProfile(selected));
+  const levels = loaded ?? {};
+  const load = () => void reload();
   const hosts = Object.keys(levels).sort();
   if (!hosts.length) return null;
   return (
@@ -233,14 +229,14 @@ const VALUE_OPTIONS: { value: SiteSettingValue; title: string }[] = [
 function SitePermissions() {
   const profiles = useProfiles();
   const [profileId, setProfileId] = useState(() => useBrowser.getState().settings.defaultProfileId);
-  const [origins, setOrigins] = useState<string[] | null>(null);
-  const refresh = () => void getSiteSettingsOrigins(engineProfile(profileId)).then(setOrigins).catch(() => setOrigins([]));
-  useEffect(refresh, [profileId]);
+  const [loaded, reload] = useResource(siteOrigins, engineProfile(profileId));
+  const origins = loaded ?? null;
+  const refresh = () => void reload();
 
   return (
     <>
       <SectionHeader
-        title="Site permissions"
+        anchor="privacy.sitePermissions"
         description="Pop-ups, camera, location and other permissions you've set for sites."
         action={
           profiles.length > 1 ? (
@@ -249,7 +245,9 @@ function SitePermissions() {
         }
       />
       <Group>
-        {origins === null ? null : origins.length === 0 ? (
+        {origins === null ? (
+          <Row title=" " description=" " />
+        ) : origins.length === 0 ? (
           <Row title="No sites yet" description="Sites appear here after you allow or block something for them." />
         ) : (
           origins.map((origin) => (
@@ -269,14 +267,14 @@ function SitePermissions() {
 function AppLinks() {
   const profiles = useProfiles();
   const [profileId, setProfileId] = useState(() => useBrowser.getState().settings.defaultProfileId);
-  const [allowed, setAllowed] = useState<ExternalAppAllowance[] | null>(null);
-  const refresh = () => void getExternalAppAllowances(engineProfile(profileId)).then(setAllowed).catch(() => setAllowed([]));
-  useEffect(refresh, [profileId]);
+  const [loaded, reload] = useResource(appLinks, engineProfile(profileId));
+  const allowed = loaded ?? null;
+  const refresh = () => void reload();
 
   return (
     <>
       <SectionHeader
-        title="Apps allowed to open links"
+        anchor="privacy.appLinks"
         description="Sites that open another app without asking first."
         action={
           profiles.length > 1 ? (
@@ -285,7 +283,9 @@ function AppLinks() {
         }
       />
       <Group>
-        {allowed === null ? null : allowed.length === 0 ? (
+        {allowed === null ? (
+          <Row title=" " description=" " />
+        ) : allowed.length === 0 ? (
           <Row title="No apps yet" description="Check “Always allow” when a site opens an app, and it shows up here." />
         ) : (
           allowed.map((a) => (

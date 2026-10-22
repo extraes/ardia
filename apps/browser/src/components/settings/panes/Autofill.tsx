@@ -2,9 +2,6 @@ import {
   cardNetworkName,
   deleteAddress,
   deleteCard,
-  getAutofillSettings,
-  listAddresses,
-  listCards,
   revealCardNumber,
   saveAddress,
   saveCard,
@@ -13,7 +10,7 @@ import {
   type SavedCard,
 } from "@ardia/ardiacore";
 import { confirm, copyText, Symbol } from "@ardia/shell";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { Text, View } from "react-native";
 import { useTheme } from "../../../lib/theme";
 import { useBrowser } from "../../../store/browser";
@@ -22,34 +19,25 @@ import { engineProfile } from "../../../store/model";
 import { IconButton } from "../../primitives";
 import { NetworkBadge } from "../../site/Autofill";
 import { Button, Group, PopUp, Row, SectionHeader, Sheet, TextField, Toggle, type Option } from "../controls";
+import { addresses as addressList, autofillEnabled, cards as cardList } from "../paneData";
+import { store, useResource } from "../resources";
 import { closeSettingsSheet, showSettingsSheet } from "../sheet";
 
 export function AutofillPane({ profileId: initial }: { profileId?: string | null }) {
   const theme = useTheme();
   const profiles = useProfiles();
   const [profileId, setProfileId] = useState(() => initial ?? useBrowser.getState().settings.defaultProfileId);
-  const [addresses, setAddresses] = useState<SavedAddress[] | null>(null);
-  const [cards, setCards] = useState<SavedCard[] | null>(null);
-  const [enabled, setEnabled] = useState<{ addresses: boolean; cards: boolean } | null>(null);
   const profile = engineProfile(profileId);
+  const [addresses, reloadAddresses] = useResource(addressList, profile);
+  const [cards, reloadCards] = useResource(cardList, profile);
+  const [enabled] = useResource(autofillEnabled, profile);
 
   const load = () => {
-    const addressesLoaded = listAddresses(profile).then(setAddresses).catch(() => setAddresses([]));
-    void listCards(profile).then(setCards).catch(() => setCards([]));
-    return addressesLoaded;
+    void reloadAddresses();
+    void reloadCards();
   };
-  useEffect(() => {
-    setEnabled(null);
-    let current = true;
-    void load().then(() =>
-      getAutofillSettings(profile)
-        .then((e) => current && setEnabled(e))
-        .catch(() => {}),
-    );
-    return () => void (current = false);
-  }, [profileId]);
   const toggle = (key: "addresses" | "cards", value: boolean) =>
-    void setAutofillSettings({ [key]: value }, profile).then(() => setEnabled((e) => e && { ...e, [key]: value }));
+    void setAutofillSettings({ [key]: value }, profile).then(() => enabled && store(autofillEnabled, [profile], { ...enabled, [key]: value }));
 
   return (
     <View>
@@ -63,16 +51,16 @@ export function AutofillPane({ profileId: initial }: { profileId?: string | null
         }
       />
       <Group>
-        <Row title="Save and fill addresses" description="Names, addresses, email addresses and phone numbers.">
+        <Row anchor="autofill.addresses">
           <Toggle value={enabled?.addresses ?? true} disabled={!enabled} onChange={(v) => toggle("addresses", v)} />
         </Row>
-        <Row title="Save and fill credit cards" description="Filling in or showing a card number asks for Touch ID or your password.">
+        <Row anchor="autofill.cards">
           <Toggle value={enabled?.cards ?? true} disabled={!enabled} onChange={(v) => toggle("cards", v)} />
         </Row>
       </Group>
 
       <SectionHeader
-        title="Addresses"
+        anchor="autofill.addressList"
         action={<Button title="Add Address…" onPress={() => showSettingsSheet(<AddressSheet profile={profile} onChanged={load} />)} />}
       />
       <Group>
@@ -92,7 +80,7 @@ export function AutofillPane({ profileId: initial }: { profileId?: string | null
       </Group>
 
       <SectionHeader
-        title="Credit Cards"
+        anchor="autofill.cardList"
         action={<Button title="Add Card…" onPress={() => showSettingsSheet(<CardSheet profile={profile} onChanged={load} />)} />}
       />
       <Group>

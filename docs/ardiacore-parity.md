@@ -305,6 +305,7 @@ The app closes a tab by unmounting its WebView; ArdiaCore closes it at once with
 |---|---|---|
 | `chooseFolder`, `list`, `inspectUnpacked`, `install`, `setEnabled`, `uninstall`, `reload`, `searchEngineList` | done | `ac_extensions_*`, `ac_search_engines_list` |
 | `installCrx` | done | ArdiaCore only (not in `packages/cef`'s API; the acceptance run uses it): a CRX3 file as one dropped on chrome://extensions, through `ac_extensions_install_crx` (the app's install prompt, then the "added" bubble) |
+| extension sync | done | `ac_extensions_sync_state` (every installed extension with whether Chrome would sync it, its version, permission fingerprint and approval, on/off, private-window access and saved pin; sync installs pending, settling and queued; the user's installs and removals since the last call, also sent as `extensions.sync` events) and `ac_extensions_sync_apply` (hands Chrome a sync install of a record, reconciles an installed one, grants an approved version, cancels a waiting install; never uninstalls), `ac_extensions_sync.cc`; `docs/sync.md` › Extensions |
 | `configure` | partial | Wired; not called by a check |
 | `resolveInstallPrompt`, `onInstallPrompt` | partial | Engine-proven (`extensionInstallPrompt`); a web-store install needs the network |
 | `onChanged` | partial | Fires on install/uninstall; not asserted on its own |

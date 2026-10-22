@@ -3,7 +3,6 @@ import {
   exportPasswords,
   getNeverSavePasswordOrigins,
   getPassword,
-  getPasswordAutofill,
   listPasswords,
   savePassword,
   setNeverSavePasswords,
@@ -23,6 +22,8 @@ import { importModule } from "../../import/module";
 import { hostLabel, matchesQuery } from "../../pages/PageLayout";
 import { Favicon, IconButton } from "../../primitives";
 import { Button, Group, PopUp, Row, SearchField, SectionHeader, Sheet, TextField, Toggle } from "../controls";
+import { passwordAutofill } from "../paneData";
+import { store, useResource } from "../resources";
 import { closeSettingsSheet, showSettingsSheet } from "../sheet";
 
 function passwordManagerAppsNote() {
@@ -43,12 +44,12 @@ export function PasswordsPane({ profileId: initial }: { profileId?: string | nul
   const [, setUnlockedAt] = useState(0);
   const [list, setList] = useState<SavedPassword[] | null>(null);
   const [never, setNever] = useState<string[]>([]);
-  const [autofill, setAutofill] = useState(true);
   const [query, setQuery] = useState("");
   const [importStatus, setImportStatus] = useState("");
   const [exportStatus, setExportStatus] = useState("");
   const profile = engineProfile(profileId);
   const unlocked = isUnlocked(profile);
+  const [autofill = true] = useResource(passwordAutofill, profile);
 
   const load = () => {
     void listPasswords(profile).then(setList).catch(() => setList([]));
@@ -57,7 +58,6 @@ export function PasswordsPane({ profileId: initial }: { profileId?: string | nul
   useEffect(() => {
     if (unlocked) load();
   }, [unlocked, profileId]);
-  useEffect(() => void getPasswordAutofill(profile).then(setAutofill).catch(() => {}), [profile]);
 
   const unlock = async () => {
     if (!(await unlockPasswords(profile))) return;
@@ -104,16 +104,16 @@ export function PasswordsPane({ profileId: initial }: { profileId?: string | nul
         }
       />
       <Group>
-        <Row title="Offer to save and fill passwords" description="Offers to save a login after you sign in, and suggests saved ones when you click a login field.">
-          <Toggle value={autofill} onChange={(v) => void setPasswordAutofill(v, profile).then(() => setAutofill(v))} />
+        <Row anchor="passwords.offerToSave">
+          <Toggle value={autofill} onChange={(v) => void setPasswordAutofill(v, profile).then(() => store(passwordAutofill, [profile], v))} />
         </Row>
-        <Row title="Import passwords" description={importStatus || "From a CSV exported by Chrome, Safari, Firefox, 1Password, Bitwarden…"}>
+        <Row anchor="passwords.importPasswords" description={importStatus || "From a CSV exported by Chrome, Safari, Firefox, 1Password, Bitwarden…"}>
           <Button title="Import CSV…" onPress={() => void importCsv()} />
         </Row>
-        <Row title="Export passwords" description={exportStatus || "To a CSV file. Anyone who can open the file can read your passwords."}>
+        <Row anchor="passwords.exportPasswords" description={exportStatus || "To a CSV file. Anyone who can open the file can read your passwords."}>
           <Button title="Export CSV…" onPress={() => void exportCsv()} />
         </Row>
-        <Row title="Password manager apps" description={passwordManagerAppsNote()} />
+        <Row anchor="passwords.managerApps" description={passwordManagerAppsNote()} />
       </Group>
 
       {!unlocked ? (

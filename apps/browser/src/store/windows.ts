@@ -20,6 +20,7 @@ import {
 import { nextPinChoice, placeChoiceKey, restoringGroup } from "./organize";
 import { adoptParkedPins, parkWindowPins } from "./parkedPins";
 import { settleMovedPins } from "./pinMirror";
+import { holderOf, returnSharedPages, swapPinPage } from "./pinShare";
 import { isSmall, isSmallWindow, lastActiveProfile, mainWindowFor, originalProfile } from "./small";
 import { activated, apply, removeTabs, withNewTab } from "./tabs";
 import type { BrowserWindow, ClosedTab, ClosedWindow, Frame, ParkedPins, Tab, TabGroup } from "./types";
@@ -157,7 +158,7 @@ export const createWindowsSlice: StateCreator<BrowserState, [], [], WindowsSlice
   },
 
   closeWindow(id) {
-    const s = get();
+    const s = returnSharedPages(get(), id);
     const w = s.windows[id];
     if (!w) return;
     const tabs = w.tabIds.map((t) => s.tabs[t]).filter((t): t is Tab => !!t && !inPinnedContainer(s, t.id));
@@ -372,6 +373,8 @@ function restoreTab(s: BrowserState, entry: ClosedTab, requested?: string | null
     })[0];
   }
   const tile = entry.pinnedTile && entry.tabId ? s.tabs[entry.tabId] : undefined;
+  const swapped = tile && !tile.navigation && !tile.adoptId && holderOf(s, tile.id) ? swapPinPage({ ...s, closedTabs }, tile.id) : null;
+  if (swapped) return apply(swapped.state, activated(swapped.state, swapped.holderId));
   if (tile) {
     const unloaded = !tile.navigation && !tile.adoptId;
     const tabs = unloaded

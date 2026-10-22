@@ -1,5 +1,6 @@
-import { requireNativeModule, requireNativeViewManager } from "expo-modules-core";
-import { View, type ViewProps } from "react-native";
+import { requireNativeModule, requireNativeViewManager, requireOptionalNativeModule } from "expo-modules-core";
+import { forwardRef, type Ref } from "react";
+import { NativeModules, View, type ViewProps } from "react-native";
 
 export type MenuShortcut = {
   id: string;
@@ -65,3 +66,47 @@ export function MouseArea({ path, onMiddleClick, ...props }: MouseAreaProps) {
   if (!NativeMouseArea) return <View {...props} />;
   return <NativeMouseArea path={path} onMiddleClick={onMiddleClick && ((e) => onMiddleClick(e.nativeEvent))} {...props} />;
 }
+
+export type DroppedItem = { kind: "file"; url: string } | { kind: "url"; url: string } | { kind: "text"; text: string };
+export type DropUpdate = { phase: "enter" | "move" | "exit" | "drop"; x: number; y: number; count: number; items: DroppedItem[] };
+export type FileDropAreaProps = ViewProps & {
+  onDropUpdate?: (e: DropUpdate) => void;
+};
+
+type NativeFileDropAreaProps = ViewProps & {
+  ref?: (instance: { nativeRef?: { current: View | null } } | null) => void;
+  onDropUpdate?: (e: { nativeEvent: DropUpdate }) => void;
+};
+
+const fileDropBuilt = !!NativeModules.NativeUnimoduleProxy?.viewManagersMetadata?.ArdiaFileDrop;
+const NativeFileDropArea = fileDropBuilt ? requireNativeViewManager<NativeFileDropAreaProps>("ArdiaFileDrop") : null;
+
+function assignRef<T>(ref: Ref<T> | undefined, value: T | null) {
+  if (typeof ref === "function") ref(value);
+  else if (ref) (ref as { current: T | null }).current = value;
+}
+
+export const FileDropArea = forwardRef<View, FileDropAreaProps>(function FileDropArea({ onDropUpdate, ...props }, ref) {
+  if (!NativeFileDropArea) return <View ref={ref} {...props} />;
+  return (
+    <NativeFileDropArea
+      ref={(instance) => assignRef(ref, instance?.nativeRef?.current ?? null)}
+      onDropUpdate={onDropUpdate && ((e) => onDropUpdate(e.nativeEvent))}
+      {...props}
+    />
+  );
+});
+
+export type DevDragAction = "move" | "drop" | "cancel" | "end";
+export type DevDragPayload = { files?: string[]; urls?: string[]; publicURLs?: string[]; text?: string; fileDrag?: boolean };
+
+const FileDrop = requireOptionalNativeModule<{
+  devDrag(windowId: string, action: DevDragAction, x: number, y: number, payload: DevDragPayload | null): Promise<string>;
+  devLastFileDrag(): Promise<string[]>;
+}>("ArdiaFileDrop");
+
+export const devFileDrag = {
+  drag: (windowId: string, action: DevDragAction, x: number, y: number, payload?: DevDragPayload) =>
+    FileDrop ? FileDrop.devDrag(windowId, action, x, y, payload ?? null) : Promise.resolve("no ArdiaFileDrop"),
+  lastFileDrag: () => (FileDrop ? FileDrop.devLastFileDrag() : Promise.resolve([])),
+};

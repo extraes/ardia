@@ -62,6 +62,7 @@ public struct SpaceSummary: Codable, Equatable, Sendable {
   public var icon: String?
   public var pinnedCount: Int
   public var tabCount: Int
+  public var theme: String?
 }
 
 public struct BrowserProfile: Codable, Equatable, Sendable {
@@ -255,7 +256,7 @@ public struct BrowserDiscovery {
       let spaces = sidebar.spaces.filter { $0.profileId == profiles[i].id }
       profiles[i].spaces = spaces.map {
         SpaceSummary(id: $0.id, name: $0.name, color: $0.color, emoji: $0.emoji, icon: $0.icon,
-                     pinnedCount: $0.pinned.reduce(0) { $0 + $1.linkCount }, tabCount: $0.tabs.count)
+                     pinnedCount: $0.pinned.reduce(0) { $0 + $1.linkCount }, tabCount: $0.tabs.count, theme: $0.theme)
       }
       var kinds = profiles[i].available
       if !spaces.isEmpty { kinds += [.spaces, .pinnedTabs, .tabs] }

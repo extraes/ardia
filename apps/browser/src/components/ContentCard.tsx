@@ -9,7 +9,7 @@ import { takeStartedNavigation } from "../lib/earlyNavigate";
 import { isQuitting } from "../lib/native";
 import { layout, useTheme } from "../lib/theme";
 import { startChromeTabs } from "../lib/chromeTabs";
-import { handOff, wantsPage } from "../lib/tabPages";
+import { handOff, isHandedOff, wantsPage } from "../lib/tabPages";
 import { noteDiscarded, noteGone, noteReady } from "../lib/tabLifecycle";
 import { usePrewarm } from "../lib/preload";
 import { webviewRef, webviews } from "../lib/webviews";
@@ -35,8 +35,11 @@ import { SplitEmptyState } from "./layout/SplitEmptyState";
 import { pagerFor } from "./layout/profilePager";
 import { openFromPage } from "./layout/openFromPage";
 import { dockMoving, useDockMotion } from "./layout/dockMotion";
-import { setUrlAnchor, useAddressBarInSidebar, useTabLayout, useToolbarExtensionsWidths } from "./layout/windowLayout";
+import { FrozenPage } from "./layout/frozenPage";
+import { holderOf } from "../store/pinShare";
+import { setCardAnchor, setUrlAnchor, useAddressBarInSidebar, useTabLayout, useToolbarExtensionsWidths } from "./layout/windowLayout";
 import { NewTabPage } from "./NewTabPage";
+import { EmptyCard } from "./EmptyCard";
 import { InternalPage } from "./pages";
 import { AutofillPrompt, BlockedPopupsPrompt, ExternalAppPrompt, PasswordPrompt, PermissionPrompt, answerExternalApp, shouldPromptForPopups, showAutofillPrompt, showPasswordPrompt } from "./site/Prompts";
 import { SiteControls } from "./site/SiteControls";
@@ -49,8 +52,9 @@ import { ShareBar } from "./media/ShareBar";
 import { CastPicker } from "./media/CastPicker";
 import { DeviceChooser } from "./site/DeviceChooser";
 import { setNowPlaying, setPictureInPictureState } from "./media/state";
-import { Toolbar, urlFieldRight } from "./Toolbar";
-import { AutoHideToolbar, useToolbarMode, useToolbarMotion } from "./AutoHideToolbar";
+import { Toolbar, ToolbarBackdrop, urlFieldRight } from "./Toolbar";
+import { AutoHideBackdrop, AutoHideToolbar, useToolbarMode, useToolbarMotion } from "./AutoHideToolbar";
+import { publishPaneChrome, WindowToolbar } from "./WindowToolbar";
 import { noteScroll, revealToolbar } from "./layout/toolbarAutoHide";
 import { NavigationOverlays } from "./layout/SwipeOverlay";
 import "./layout/devExpose";
@@ -127,7 +131,9 @@ export function ContentCard() {
     const s = useBrowser.getState();
     for (const id of Object.keys(panes)) {
       const t = s.tabs[id];
-      if (t?.url && !t.navigation && !t.adoptId) s.updateTab(id, wake(t));
+      if (!t?.url || t.navigation || t.adoptId || t.pageIn) continue;
+      const holder = holderOf(s, id);
+      s.updateTab(id, holder ? { pageIn: holder.id, unloaded: undefined } : wake(t));
     }
   }, [panes]);
 
@@ -210,6 +216,10 @@ export function ContentCard() {
     });
   }, [origin, focusedRect?.x, focusedRect?.y, focusedRect?.width, tabLayout, addressInSidebar, !!split, showSidebarButton]);
 
+  useEffect(() => {
+    if (origin && size.width > 0) setCardAnchor(windowId, { left: origin.x, top: origin.y, width: size.width, height: size.height });
+  }, [origin, size.width, size.height, windowId]);
+
   const settled = useRef<{ width: number; height: number } | null>(null);
   const measure = (width: number, height: number) => {
     setSize({ width, height });
@@ -225,6 +235,8 @@ export function ContentCard() {
       }),
     [windowId],
   );
+
+  const windowToolbar = !split && !fullscreenTab && !addressInSidebar && !small;
 
   return (
     <View
@@ -260,9 +272,16 @@ export function ContentCard() {
               mounted={mountedIds.has(tabId)}
               warm={warmPanes[tabId]}
               barMode={barMode}
+              windowToolbar={windowToolbar}
             />
           );
         })}
+      {size.width > 0 && windowToolbar && activeId && panes[activeId] && (
+        <WindowToolbar windowId={windowId} tabId={activeId} geometry={geometryFor(panes[activeId])} autoHide={hideWhileScrolling} />
+      )}
+      {size.width > 0 && !split && !fullscreenTab && (
+        <FrozenPage windowId={windowId} tabId={activeId} top={(!addressInSidebar && !small && !hideWhileScrolling ? layout.toolbarHeight : 0) + (barMode === "always" && !small && !hideWhileScrolling ? BOOKMARKS_BAR_HEIGHT : 0)} />
+      )}
       {split && !fullscreenTab && <SplitDividers split={split} dividers={dividers} width={size.width} height={size.height} />}
       {!fullscreenTab && <DropTargets panes={panes} origin={origin} />}
       {!fullscreenTab && !small && <PeekOverlay windowId={windowId} width={size.width} height={size.height} origin={origin} page={peekPage} />}
@@ -289,6 +308,7 @@ const TabPane = memo(function TabPane({
   mounted,
   warm,
   barMode,
+  windowToolbar,
 }: {
   tabId: string;
   windowId: string;
@@ -307,12 +327,14 @@ const TabPane = memo(function TabPane({
   mounted: boolean;
   warm: Rect | undefined;
   barMode: BookmarksBarMode;
+  windowToolbar: boolean;
 }) {
   const theme = useTheme();
   const visible = !!rect;
   const live = visible || !!warm;
   const own = useTabValue(tabId, paneTab, shallowEqual);
   const isNewTab = !own.url;
+  const emptyCard = useBrowser((s) => isNewTab && s.settings.newTabOpens === "commandBar");
   const zoom = own.zoom;
   const popover = useStoreWhile(usePages, visible, (s) => s.popover[tabId] ?? null);
   const newTabShown = useStoreWhile(usePages, live, (s) => !!s.pages[tabId]?.newTabShown);
@@ -322,7 +344,7 @@ const TabPane = memo(function TabPane({
   useEffect(() => {
     if (visible && isNewTab && !mounted) patchPage(tabId, { wasNewTab: true });
   }, [visible, isNewTab, mounted]);
-  const prewarmed = usePrewarm(visible && isNewTab && !mounted && !small && !inSplit);
+  const prewarmed = usePrewarm(visible && isNewTab && !emptyCard && !mounted && !small && !inSplit);
   const hideBar = autoHide && visible && !fullscreen;
   const mode = useToolbarMode(tabId, windowId, hideBar);
   const bookmarksBar = bookmarksBarShown(barMode, own.exists ? own : undefined) && !fullscreen && !inSplit && !small;
@@ -332,6 +354,10 @@ const TabPane = memo(function TabPane({
   useEffect(() => {
     if (visible) revealToolbar(tabId);
   }, [visible]);
+  const chromeInWindow = hideBar && windowToolbar;
+  useLayoutEffect(() => {
+    if (chromeInWindow) publishPaneChrome(windowId, { tabId, mode, bar: motion.bar, fade: motion.fade });
+  });
 
   return (
     <View
@@ -348,8 +374,10 @@ const TabPane = memo(function TabPane({
         backgroundColor: visible && !fullscreen ? theme.card : undefined,
       }}
     >
-      {!toolbar || fullscreen || autoLayout ? null : visible ? (
+      {!toolbar || fullscreen || autoLayout ? null : visible && !windowToolbar ? (
         <Toolbar tabId={tabId} geometry={geometry} windowId={windowId} inSplit={inSplit} focused={focused || !inSplit} />
+      ) : visible ? (
+        <ToolbarBackdrop tabId={tabId} />
       ) : (
         <View style={{ height: layout.toolbarHeight }} />
       )}
@@ -361,7 +389,7 @@ const TabPane = memo(function TabPane({
           {visible && !fullscreen && <ShareBar tabId={tabId} />}
           <View style={{ flex: 1 }}>
             {(mounted || prewarmed) && <TabWebView tabId={tabId} visible={visible && !newTabShown && !isNewTab} warm={!!warm && !newTabShown && !isNewTab} />}
-            {visible && isNewTab && !small && (inSplit ? <SplitEmptyState tabId={tabId} focused={focused} /> : <NewTabPage key={tabId} tabId={tabId} toolbar={toolbar} />)}
+            {visible && isNewTab && !small && (inSplit ? <SplitEmptyState tabId={tabId} focused={focused} /> : emptyCard ? <EmptyCard windowId={windowId} tabId={tabId} /> : <NewTabPage key={tabId} tabId={tabId} toolbar={toolbar} />)}
             {visible && <InternalPage tabId={tabId} />}
             {visible && (
               <>
@@ -388,7 +416,8 @@ const TabPane = memo(function TabPane({
           </View>
         </View>
       </Animated.View>
-      {hideBar && <AutoHideToolbar tabId={tabId} geometry={geometry} windowId={windowId} inSplit={inSplit} focused={focused || !inSplit} mode={mode} motion={motion} />}
+      {hideBar && <AutoHideBackdrop tabId={tabId} mode={mode} motion={motion} />}
+      {hideBar && !windowToolbar && <AutoHideToolbar tabId={tabId} geometry={geometry} windowId={windowId} inSplit={inSplit} focused={focused || !inSplit} mode={mode} motion={motion} />}
     </View>
   );
 });
@@ -416,8 +445,13 @@ const TabWebView = memo(function TabWebView({ tabId, visible, warm }: { tabId: s
 
   const seq = navigation?.seq;
   const adopted = useRef<string | null>(null);
+  const arrived = useRef(isHandedOff(tabId));
   useEffect(() => {
     if (!navigation) return;
+    if (arrived.current) {
+      arrived.current = false;
+      return;
+    }
     if (navigation.url === adopted.current) {
       adopted.current = null;
       return;

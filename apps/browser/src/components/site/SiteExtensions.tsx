@@ -5,12 +5,12 @@ import type { View } from "react-native";
 import { activateExtension, openManageExtensions, openPinDialog, openWebStore, showExtensionMenu, useWindowExtensions, type Anchor } from "../extensions/state";
 import { ExtensionTile, SectionTitle, TileGrid } from "./SiteControlsParts";
 
-export function SiteExtensions({ windowId, onClose }: { windowId: string; onClose: () => void }) {
+export function SiteExtensions({ windowId, columns, onClose }: { windowId: string; columns: number; onClose: () => void }) {
   const extensions = useWindowExtensions(windowId);
   return (
     <>
       <SectionTitle title="Extensions" />
-      <TileGrid>
+      <TileGrid columns={columns}>
         {extensions.map((ext) => (
           <ExtensionGridTile key={ext.id} ext={ext} windowId={windowId} onClose={onClose} />
         ))}

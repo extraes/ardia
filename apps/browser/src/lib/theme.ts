@@ -2,14 +2,17 @@ import type { AreaLightPalette } from "@ardia/shaders";
 import { createContext, createElement, useContext, type ReactNode } from "react";
 import { useBrowser, type BrowserState } from "../store/browser";
 import { PageProfileContext, WindowContext } from "../store/hooks";
-import type { ProfileColor } from "../store/types";
+import type { Profile, ProfileColor, ProfileTheme } from "../store/types";
+import { opaqueThemeTint, PRESET_BACKDROP, resolveTheme, rgbToHsl, themeAccent, themeBackdrop, themeDark, themePalette, type ThemeBackdropProps } from "./profileTheme";
 import { backdropTint, opaqueTint, tintForHue, type BackdropTint } from "./windowTint";
 
 export type Theme = typeof dark & {
   profileColor: ProfileColor | "incognito";
-  backdrop: BackdropTint;
+  backdrop: BackdropTint & ThemeBackdropProps;
   windowTint: [string, string];
   powerUpColor: string | null;
+  powerUpPalette: string[] | null;
+  custom: ProfileTheme | null;
 };
 
 const dark = {
@@ -56,7 +59,7 @@ const dark = {
   chipText: "#FFFFFF99",
   goButton: "#DCCBD8",
   goButtonText: "#1A1418",
-  sendIdle: "rgba(255,255,255,0.08)",
+  goButtonIdle: "rgba(255,255,255,0.08)",
 
   ntpBarSolid: "#2D2D2D",
   ntpBarBorder: "rgba(120,125,134,0.32)",
@@ -107,7 +110,7 @@ const light: typeof dark = {
   chipText: "#00000099",
   goButton: "#0F182C",
   goButtonText: "#FFFFFF",
-  sendIdle: "rgba(0,0,0,0.06)",
+  goButtonIdle: "rgba(0,0,0,0.06)",
 
   ntpBarSolid: "#FEFFFF",
   ntpBarBorder: "rgba(0,0,0,0.07)",
@@ -152,9 +155,9 @@ export const PROFILE_COLORS: Record<ProfileColor, ProfileColorSpec> = {
 
 const INCOGNITO_TINT = "#3A3A3C";
 
-export function profileNameColor(color: ProfileColor, dark: boolean): string {
-  const spec = PROFILE_COLORS[color] ?? PROFILE_COLORS.plum;
-  const base = spec.action ?? spec.swatch;
+export function profileNameColor(profile: Pick<Profile, "color" | "theme">, dark: boolean): string {
+  const spec = PROFILE_COLORS[profile.color] ?? PROFILE_COLORS.plum;
+  const base = profile.theme ? themeAccent(resolveTheme(profile.theme, dark)) : (spec.action ?? spec.swatch);
   return dark ? mix(base, "#FFFFFF", 0.6) : mix(base, "#000000", 0.4);
 }
 
@@ -177,20 +180,75 @@ export function themeFor(key: string): Theme {
     theme = {
       ...base,
       profileColor: color,
-      backdrop,
+      backdrop: { ...backdrop, ...PRESET_BACKDROP },
       windowTint: opaqueTint(backdrop, base.dark),
       powerUpColor,
+      powerUpPalette: powerUpColor ? [powerUpColor] : null,
+      custom: null,
     };
     cache.set(key, theme);
   }
   return theme;
 }
 
-function themeKey(s: BrowserState, windowId: string | null, page: string | null): string {
+export function nearestPreset(hexColor: string): ProfileColor {
+  const ch = (h: string, i: number) => parseInt(h.slice(1 + 2 * i, 3 + 2 * i), 16) / 255;
+  const hsl = (h: string) => rgbToHsl(ch(h, 0), ch(h, 1), ch(h, 2));
+  const [h, s] = hsl(hexColor);
+  if (s < 0.12) return "neutral";
+  let best: ProfileColor = "plum";
+  let distance = Infinity;
+  for (const [name, spec] of Object.entries(PROFILE_COLORS) as [ProfileColor, ProfileColorSpec][]) {
+    if (name === "neutral") continue;
+    const [sh] = hsl(spec.swatch);
+    const d = Math.min(Math.abs(sh - h), 1 - Math.abs(sh - h));
+    if (d < distance) [best, distance] = [name, d];
+  }
+  return best;
+}
+
+const customCache = new WeakMap<ProfileTheme, Map<string, Theme>>();
+
+function customTheme(custom: ProfileTheme, color: ProfileColor, appDark: boolean, followApp: boolean): Theme {
+  const dark = followApp ? appDark : themeDark(custom, appDark);
+  const key = `${color}:${dark ? "dark" : "light"}`;
+  let byKey = customCache.get(custom);
+  if (!byKey) customCache.set(custom, (byKey = new Map()));
+  let theme = byKey.get(key);
+  if (!theme) {
+    const preset = themeFor(key);
+    const look = resolveTheme(custom, dark);
+    const accent = themeAccent(look);
+    const palette = themePalette(look);
+    theme = {
+      ...preset,
+      profileColor: nearestPreset(accent),
+      backdrop: { ...backdropTint(accent, false), ...themeBackdrop(look, dark) },
+      windowTint: opaqueThemeTint(look, dark),
+      powerUpColor: accent,
+      powerUpPalette: palette.length > 1 ? palette : [palette[0] ?? accent],
+      custom,
+    };
+    byKey.set(key, theme);
+  }
+  return theme;
+}
+
+export function profileTheme(profile: Pick<Profile, "color" | "theme"> | undefined, appDark: boolean, followApp = false): Theme {
+  const color = profile?.color ?? "plum";
+  if (profile?.theme) return customTheme(profile.theme, color, appDark, followApp);
+  return themeFor(`${color}:${appDark ? "dark" : "light"}`);
+}
+
+export function profileAccent(profile: Pick<Profile, "color" | "theme"> | undefined): string {
+  if (profile?.theme) return themeAccent(profile.theme);
+  return (PROFILE_COLORS[profile?.color ?? "plum"] ?? PROFILE_COLORS.plum).swatch;
+}
+
+function themeOf(s: BrowserState, windowId: string | null, page: string | null): Theme {
   const w = s.windows[windowId ?? s.ui.focusedWindowId ?? ""];
-  if (w?.incognito) return "incognito";
-  const color = s.profiles[page ?? w?.profileId ?? s.settings.defaultProfileId]?.color ?? "plum";
-  return `${color}:${s.ui.appDark ? "dark" : "light"}`;
+  if (w?.incognito) return themeFor("incognito");
+  return profileTheme(s.profiles[page ?? w?.profileId ?? s.settings.defaultProfileId], s.ui.appDark, !windowId);
 }
 
 const ThemeContext = createContext<Theme | null>(null);
@@ -198,15 +256,15 @@ const ThemeContext = createContext<Theme | null>(null);
 export function ThemeScope({ children }: { children: ReactNode }) {
   const windowId = useContext(WindowContext);
   const page = useContext(PageProfileContext);
-  const key = useBrowser((s) => themeKey(s, windowId, page));
-  return createElement(ThemeContext.Provider, { value: themeFor(key) }, children);
+  const theme = useBrowser((s) => themeOf(s, windowId, page));
+  return createElement(ThemeContext.Provider, { value: theme }, children);
 }
 
 export function useTheme(): Theme {
   const scoped = useContext(ThemeContext);
   if (scoped) return scoped;
   if (__DEV__) console.warn("useTheme outside a ThemeScope");
-  return themeFor(themeKey(useBrowser.getState(), null, null));
+  return themeOf(useBrowser.getState(), null, null);
 }
 
 export const layout = {

@@ -39,7 +39,7 @@ let reduceMotion = false;
 AccessibilityInfo.isReduceMotionEnabled().then((on) => (reduceMotion = on), () => {});
 AccessibilityInfo.addEventListener("reduceMotionChanged", (on) => (reduceMotion = on));
 
-function barWidth(viewWidth: number) {
+export function barWidth(viewWidth: number) {
   const content = viewWidth < 708 ? (viewWidth <= 636 ? viewWidth - 20 : 616) : viewWidth < 1700 ? 652 : 774;
   return Math.min(content, viewWidth - 28);
 }
@@ -84,10 +84,10 @@ export function NewTabPage({ tabId, toolbar = true }: { tabId: string; toolbar?:
 
   return (
     <View style={{ flex: 1 }} onLayout={(e) => setSize(e.nativeEvent.layout)}>
-      {playIntro && theme.powerUpColor && (
+      {playIntro && theme.powerUpPalette && (
         <PowerUp
           style={StyleSheet.absoluteFill}
-          palette={[theme.powerUpColor]}
+          palette={theme.powerUpPalette}
           speed={1}
           origin={0.5}
           cornerRadius={20}

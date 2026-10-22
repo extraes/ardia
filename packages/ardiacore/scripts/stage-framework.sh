@@ -45,10 +45,15 @@ fill_cache() {
   local tmp="$cache/.tmp-$$" key fwv lib helper
   rm -rf "$tmp" && mkdir -p "$tmp" || return 1
   echo "staging $src" >&2
-  "$repo/scripts/agent/locked" chromium --wait 500 -- bash -c '
+  local copy=(bash -c '
     set -e
     "$3" --key "$1" >"$2/.key"
-    cp -cR "$1" "$2/"' _ "$src" "$tmp" "$here/${0##*/}" >&2 || return 1
+    cp -cR "$1" "$2/"' _ "$src" "$tmp" "$here/${0##*/}")
+  if [[ "$src" == "$HOME/chromium-build/"* ]]; then
+    "$repo/scripts/agent/locked" chromium --wait 500 -- "${copy[@]}" >&2 || return 1
+  else
+    "${copy[@]}" >&2 || return 1
+  fi
   key=$(cat "$tmp/.key") || return 1
   sign() { codesign --force --timestamp=none --sign - "$@"; }
   fwv=$(cd "$tmp/$name.framework/Versions/Current" && pwd -P) || return 1

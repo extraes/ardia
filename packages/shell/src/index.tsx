@@ -55,6 +55,7 @@ export type BrowserCommand =
   | "selectTab"
   | "selectLastTab"
   | "togglePin"
+  | "togglePinnedRow"
   | "duplicateTab"
   | "moveTabToProfile"
   | "moveTabToWindow"

@@ -183,3 +183,20 @@ test("the Peek modifier setting: ⇧-click by default, ⌥-click or Off, synced,
   S().hydrate({ profiles: { default: PERSONAL }, profileOrder: ["default"], settings: { peekModifier: "alt" } });
   assert.equal(peekModifierOf(S().settings), "alt");
 });
+
+test("another window taking a shared pin's page closes the peek opened from it", () => {
+  S().hydrate({ profiles: { default: PERSONAL }, profileOrder: ["default"] });
+  const a = S().createWindow({ url: "https://mail.example/" });
+  const [mail] = S().windows[a].tabIds;
+  S().pinTabs([mail], true);
+  S().activate(mail);
+  const b = S().createWindow({ url: "https://b.example/" });
+  const id = S().openPeek(mail, "https://peek.example/");
+  assert.equal(peekTabId(S(), a), id);
+  const copy = viewTabIds(S(), b).find((t) => S().tabs[t].pinned);
+  S().activate(copy);
+  assert.equal(S().tabs[mail].windowId, b);
+  assert.equal(S().peeks[a], undefined);
+  assert.equal(S().peeks[b], undefined);
+  assert.equal(S().tabs[id], undefined);
+});

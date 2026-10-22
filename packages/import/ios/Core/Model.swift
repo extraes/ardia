@@ -206,6 +206,7 @@ public struct SpaceSuggestion: Codable, Equatable, Sendable {
   public var profileId: String
   public var pinned: [BookmarkNode]
   public var tabs: [ImportedTab]
+  public var theme: String? = nil
 }
 
 public struct ProfileSuggestion: Codable, Equatable, Sendable {

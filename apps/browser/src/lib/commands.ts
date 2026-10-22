@@ -24,9 +24,13 @@ import {
 import { bookmarkAllTabs, bookmarkTab } from "../components/bookmarks/actions";
 import { useClearDataRequest } from "../components/pages/ClearDataDialog";
 import { openInternalPage } from "../components/pages/urls";
-import { isUtilityWindowId, openImport, openSettings } from "../components/settings/windows";
+import { isUtilityWindowId, openImport, openSettings, SETTINGS_WINDOW_ID } from "../components/settings/windows";
+import { focusSettingsSearch } from "../components/settings/searchState";
 import { closePanelToHeroBar, focusHeroBar } from "../components/omnibox/barState";
+import { closeNewTabBar, isEmptyCardTab, showNewTabBar, toggleNewTabBar } from "../components/omnibox/newTabBar";
+import { NEW_TAB_BAR_POLICY } from "../store/newTabBar";
 import { addressBarInSidebar } from "../components/layout/windowLayout";
+import { withLivePage } from "./livePage";
 import { webviews } from "./webviews";
 import { goBack, goForward } from "../components/layout/history";
 import { openSplitPane } from "../components/layout/splitActions";
@@ -50,6 +54,7 @@ export function runCommand({ command, arg, windowId: requested }: CommandEvent) 
 
   if (isUtilityWindowId(requested)) {
     if (command === "closeTab") return void closeNativeWindow(requested!);
+    if (command === "findInPage" && requested === SETTINGS_WINDOW_ID) return focusSettingsSearch();
     requested = null;
   }
   if (isSmall(s, requested) && runLittleArdiaCommand(command, requested!)) return;
@@ -124,6 +129,7 @@ export function runCommand({ command, arg, windowId: requested }: CommandEvent) 
 
   switch (command) {
     case "newTab":
+      if (toggleNewTabBar(windowId)) return;
       return void s.newTab(windowId);
     case "reopenClosedTab":
       return s.reopenClosed(windowId);
@@ -131,10 +137,16 @@ export function runCommand({ command, arg, windowId: requested }: CommandEvent) 
       return arg ? s.restoreClosed(arg, windowId) : undefined;
     case "focusCommandBar":
       if (page) return s.openPanel(windowId, page.url);
+      if (isEmptyCardTab(s, tab) && showNewTabBar(windowId)) return;
       if (tab && addressBarInSidebar(s, windowId)) return s.openPanel(windowId, "");
       if (!focusHeroBar(windowId, tabId)) return tab ? s.openPanel(windowId, "") : undefined;
       return ui?.panel.open ? s.closePanel(windowId) : undefined;
     case "closeTab":
+      if (ui?.panel.newTab) {
+        closeNewTabBar(windowId);
+        if (NEW_TAB_BAR_POLICY.closeTabKeyOnlyDismissesBar || !tabId) return;
+        return void closeTab(tabId);
+      }
       if (ui?.panel.open) return tabId ? closePanelToHeroBar(windowId, tabId) : s.closePanel(windowId);
       if (tabId && find?.open) return closeFind(tabId);
       return tabId ? void closeTab(tabId) : undefined;
@@ -176,9 +188,9 @@ export function runCommand({ command, arg, windowId: requested }: CommandEvent) 
       if (!find?.query) return s.setFind(page.id, { open: true });
       return void web?.find(find.query, command === "findNext", true);
     case "reload":
-      return void web?.reload();
+      return void (tabId && withLivePage(tabId, (page) => page.reload()));
     case "forceReload":
-      return void web?.forceReload();
+      return void (tabId && withLivePage(tabId, (page) => page.forceReload()));
     case "toggleTabLayout":
       return s.toggleTabLayout(windowId);
     case "openSplitPane":

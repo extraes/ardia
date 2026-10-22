@@ -136,7 +136,7 @@ index cac171e70c9fa225cdec45b205086342a0d50f06..b9fefeceb4400f181c5a1c39b73404f8
  
  - (void)reactBlur
 diff --git a/Libraries/Text/TextInput/Singleline/RCTUITextField.mm b/Libraries/Text/TextInput/Singleline/RCTUITextField.mm
-index 137d0ee9f51616ea27c397a8bf595fe2c0ff5e91..919fc6f23ad364814fe4dad680042df032d31362 100644
+index 137d0ee9f51616ea27c397a8bf595fe2c0ff5e91..a7c532f3f77e38595e92764d05148cb988eb8ea9 100644
 --- a/Libraries/Text/TextInput/Singleline/RCTUITextField.mm
 +++ b/Libraries/Text/TextInput/Singleline/RCTUITextField.mm
 @@ -330,7 +330,9 @@ - (void)setPlaceholder:(NSString *)placeholder
@@ -148,6 +148,16 @@ index 137d0ee9f51616ea27c397a8bf595fe2c0ff5e91..919fc6f23ad364814fe4dad680042df0
 +  _isUpdatingPlaceholderText = NO; // [Ardia]
  #endif // macOS]
    [self _updatePlaceholder];
+ }
+@@ -385,6 +387,9 @@ - (void)_updatePlaceholder
+   _isUpdatingPlaceholderText = YES;
+   self.placeholderAttributedString = [[NSAttributedString alloc] initWithString:self.placeholder ?: @""
+ 																	 attributes:[self _placeholderTextAttributes]];
++  if (self.currentEditor) { // [Ardia: the field editor keeps the placeholder it was set up with while it holds text, so a colour change (dark to light) left the old one, invisible, once the field was emptied Ardia]
++    [self.cell setUpFieldEditorAttributes:self.currentEditor];
++  } // [Ardia]
+   _isUpdatingPlaceholderText = NO;
+ #endif // macOS]
  }
 diff --git a/Libraries/Text/TextInput/Singleline/macOS/RCTUISecureTextField.mm b/Libraries/Text/TextInput/Singleline/macOS/RCTUISecureTextField.mm
 index 6f332dc1701cada0aff0e9a2678fa7bdcea0ef85..462853ec8b76f004cd5b9e92291473bc673a7ed1 100644
@@ -221,7 +231,7 @@ index 6f332dc1701cada0aff0e9a2678fa7bdcea0ef85..462853ec8b76f004cd5b9e92291473bc
  
  #endif // TARGET_OS_OSX
 diff --git a/React/Base/macOS/RCTUIKit.m b/React/Base/macOS/RCTUIKit.m
-index a37a1c106a04752c1baeb6dd2170402ce5f34f71..757bd744096aa5c3451544260b7dac3b31e08602 100644
+index a37a1c106a04752c1baeb6dd2170402ce5f34f71..be88b42f1cd4bc0521055d97eb948c28e012c402 100644
 --- a/React/Base/macOS/RCTUIKit.m
 +++ b/React/Base/macOS/RCTUIKit.m
 @@ -284,20 +284,53 @@ - (CATransform3D)transform3D
@@ -286,7 +296,20 @@ index a37a1c106a04752c1baeb6dd2170402ce5f34f71..757bd744096aa5c3451544260b7dac3b
  
  - (NSView *)hitTest:(NSPoint)point
  {
-@@ -331,8 +364,8 @@ - (void)updateLayer
+@@ -308,7 +341,11 @@ - (NSView *)hitTest:(NSPoint)point
+   if (self.layer.superlayer) {
+     localPoint = [self.layer convertPoint:point fromLayer:self.layer.superlayer];
+   } else {
+-    localPoint = point;
++    // [Ardia: a view React Native just mounted has no layer in the tree until AppKit's next display pass; hit-testing
++    // the superview's point as a local one put it at its superview's origin for those frames (a new sidebar hover card
++    // took clicks meant for the pinned tiles). Its frame says where it is.
++    localPoint = self.superview != nil ? [self convertPoint:point fromView:self.superview] : point;
++    // Ardia]
+   }
+   return [self hitTest:localPoint withEvent:nil];
+ }
+@@ -331,8 +368,8 @@ - (void)updateLayer
    // On macOS, AppKit's layer-backed view system resets layer.transform to identity
    // during its layout/display cycle because NSView has no built-in transform property
    // (unlike UIView on iOS). We must re-apply the stored transform after each cycle.
@@ -297,7 +320,7 @@ index a37a1c106a04752c1baeb6dd2170402ce5f34f71..757bd744096aa5c3451544260b7dac3b
    }
  
    if (_respondsToDisplayLayer) {
-@@ -822,6 +855,13 @@ - (instancetype)initWithFrame:(CGRect)frame
+@@ -822,6 +859,13 @@ - (instancetype)initWithFrame:(CGRect)frame
    return self;
  }
  
@@ -917,10 +940,49 @@ index eb79ff32614392cb16e6eb3dbec6cc5b037fe27a..e0aee0c66030a8e29c279133399f1b0d
      [defaultCenter addObserver:self
                        selector:@selector(scrollViewDocumentViewBoundsDidChange:)
 diff --git a/React/Views/UIView+React.m b/React/Views/UIView+React.m
-index 30c4f1e53e7b94016c8ed1b425587753fc80c2ce..1090fa65bc64e943dd360b4298ce21364e157894 100644
+index 30c4f1e53e7b94016c8ed1b425587753fc80c2ce..1fe8dd641c9c0135f43960e4cc57a0fae4cc8655 100644
 --- a/React/Views/UIView+React.m
 +++ b/React/Views/UIView+React.m
-@@ -306,7 +306,15 @@ static void updateTransform(RCTPlatformView *view) // [macOS]
+@@ -191,9 +191,38 @@ - (void)setReactZIndex:(NSInteger)reactZIndex
+ 
+ - (void)didUpdateReactSubviews
+ {
++#if TARGET_OS_OSX // [macOS
++  // [Ardia: -addSubview: on a view that is already a subview takes it out and puts it back (it leaves and re-enters
++  // the window, its layer is rebuilt), so re-adding every child whenever one was inserted or removed cost a closed
++  // tab ~58 of them, 7-9 ms. The children end up in the same order, after any non-React subviews, as before; the
++  // ones already in place are left alone and the rest are put in order by -setSubviews:. Ardia]
++  NSArray<RCTPlatformView *> *wanted = self.reactSubviews;
++  NSArray<NSView *> *current = self.subviews;
++  if (current.count >= wanted.count &&
++      [[current subarrayWithRange:NSMakeRange(current.count - wanted.count, wanted.count)] isEqualToArray:wanted]) {
++    return;
++  }
++  NSMutableArray<NSView *> *unique = [NSMutableArray arrayWithCapacity:wanted.count];
++  NSMutableSet<NSView *> *react = [NSMutableSet setWithCapacity:wanted.count];
++  for (NSView *view in wanted.reverseObjectEnumerator) {
++    if (![react containsObject:view]) {
++      [react addObject:view];
++      [unique insertObject:view atIndex:0];
++    }
++  }
++  NSMutableArray<NSView *> *order = [NSMutableArray arrayWithCapacity:current.count + wanted.count];
++  for (NSView *view in current) {
++    if (![react containsObject:view]) {
++      [order addObject:view];
++    }
++  }
++  [order addObjectsFromArray:unique];
++  [self setSubviews:order];
++#else // macOS]
+   for (RCTPlatformView *subview in self.reactSubviews) { // [macOS]
+     [self addSubview:subview];
+   }
++#endif // [macOS]
+ }
+ 
+ - (void)didSetProps:(__unused NSArray<NSString *> *)changedProps
+@@ -306,7 +335,15 @@ static void updateTransform(RCTPlatformView *view) // [macOS]
      transform = view.reactTransform;
    }
  

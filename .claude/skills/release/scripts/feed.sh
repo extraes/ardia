@@ -14,8 +14,8 @@ case "$feed" in
   *) echo "FAIL  feed URL is https  ($feed)"; exit 1 ;;
 esac
 xml="$(curl -fsSL --max-time 20 --retry 2 "$feed" 2>&1)" || { echo "FAIL  feed answers  ($feed: $xml)"; exit 1; }
-listed="$(printf '%s' "$xml" | grep -o 'shortVersionString>[^<]*' | head -1 | sed 's/.*>//' || true)"
-if ! printf '%s' "$xml" | grep -q 'xmlns:sparkle'; then
+listed="$(grep -o 'shortVersionString>[^<]*' <<< "$xml" | head -1 | sed 's/.*>//' || true)"
+if ! grep -q 'xmlns:sparkle' <<< "$xml"; then
   echo "FAIL  feed is a Sparkle appcast  ($feed)"
   exit 1
 fi

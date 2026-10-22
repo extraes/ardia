@@ -1,5 +1,4 @@
-import { appIcons, currentAppIcon, setAppearance, setAppIcon, Symbol, type AppIcon } from "@ardia/shell";
-import { useEffect, useState } from "react";
+import { setAppearance, setAppIcon, Symbol, type AppIcon } from "@ardia/shell";
 import { Image, Pressable, Text, View } from "react-native";
 import { useTheme } from "../../../lib/theme";
 import { useBrowser } from "../../../store/browser";
@@ -7,6 +6,8 @@ import { tabLayoutOf } from "../../../store/model";
 import type { Settings } from "../../../store/settings";
 import { useHover } from "../../primitives";
 import { SectionHeader, useFormColors } from "../controls";
+import { APP_ICON_SIZE, appIconChoices } from "../paneData";
+import { store, useResource } from "../resources";
 
 const MODES: { value: Settings["appearance"]; title: string; description: string }[] = [
   { value: "auto", title: "Automatic", description: "Follow the system appearance setting" },
@@ -22,7 +23,7 @@ export function AppearancePane() {
   };
   return (
     <View>
-      <SectionHeader title="Appearance Theme" description="Also in View › Appearance. Incognito windows are always dark." />
+      <SectionHeader anchor="appearance.theme" description="Also in View › Appearance. Incognito windows are always dark." />
       <View style={{ flexDirection: "row", gap: 14 }}>
         {MODES.map((m) => (
           <ModeChoice key={m.value} mode={m.value} title={m.title} description={m.description} selected={appearance === m.value} onPress={() => choose(m.value)} />
@@ -41,7 +42,7 @@ function AddressBarPicker() {
   return (
     <>
       <SectionHeader
-        title="Address Bar"
+        anchor="appearance.addressBar"
         description={
           topTabs
             ? "Tabs are across the top of the window, so the address bar stays in the toolbar. Also in View › Show Address Bar in Sidebar."
@@ -102,22 +103,17 @@ function AddressBarChoice({ value, title, selected, onPress }: { value: Settings
 }
 
 function AppIconPicker() {
-  const [icons, setIcons] = useState<AppIcon[]>([]);
-  const [current, setCurrent] = useState<string | null>(null);
-  useEffect(() => {
-    void Promise.all([appIcons(ICON_SIZE), currentAppIcon()]).then(([list, id]) => {
-      setIcons(list);
-      setCurrent(id);
-    });
-  }, []);
+  const [choices] = useResource(appIconChoices);
+  const icons = choices?.icons ?? [];
+  const current = choices?.current ?? null;
   if (icons.length < 2) return null;
   const choose = (id: string) => {
-    setCurrent(id);
+    store(appIconChoices, [], { icons, current: id });
     void setAppIcon(id);
   };
   return (
     <>
-      <SectionHeader title="App Icon" description="Shown in the Dock and the app switcher. The Dock keeps it after you quit." />
+      <SectionHeader anchor="appearance.appIcon" description="Shown in the Dock and the app switcher. The Dock keeps it after you quit." />
       <View style={{ flexDirection: "row", flexWrap: "wrap", columnGap: 6, rowGap: 10 }}>
         {icons.map((icon) => (
           <IconChoice key={icon.id} icon={icon} selected={icon.id === current} onPress={() => choose(icon.id)} />
@@ -127,7 +123,7 @@ function AppIconPicker() {
   );
 }
 
-const ICON_SIZE = 56;
+const ICON_SIZE = APP_ICON_SIZE;
 
 function IconChoice({ icon, selected, onPress }: { icon: AppIcon; selected: boolean; onPress: () => void }) {
   const theme = useTheme();

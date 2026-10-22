@@ -72,7 +72,7 @@ export const features: Feature[] = [
   {
     id: "extensions",
     title: "Your extensions come along.",
-    body: "The Chrome Web Store just works, and its button says Add to Ardia.",
+    body: "The Chrome Web Store just works, its button says Add to Ardia, and Sync takes them to your other Macs.",
     shots: [extensions],
     alt: "Dark Reader’s page on the Chrome Web Store, open in Ardia, with an Add to Ardia button.",
     hour: "golden",
@@ -113,7 +113,8 @@ export const duo: Feature[] = [
 ];
 
 export const extras: { title: string; body: string }[] = [
-  { title: "Moves in for you", body: "Bookmarks, history, passwords and logins from Chrome, Safari, Firefox, Arc, Dia and five more. Arc’s spaces and pinned tabs too." },
+  { title: "Moves in for you", body: "Bookmarks, history, passwords and logins from Chrome, Safari, Firefox, Arc, Dia and five more. Arc’s spaces, pinned tabs and themes too." },
+  { title: "Paints like Arc", body: "Gradient themes per profile: up to three colours, some grain, some blur." },
   { title: "Syncs through your iCloud", body: "End-to-end encrypted, in a folder in your own iCloud Drive, so even Apple only sees gibberish. No server of ours in the middle." },
   { title: "Command bar", body: "⌘L finds tabs, history and bookmarks, does your sums, and knows doc.new and 16 friends." },
   { title: "Updates itself", body: "Quietly, then shows you what changed." },

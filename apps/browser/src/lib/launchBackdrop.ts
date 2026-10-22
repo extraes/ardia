@@ -1,7 +1,8 @@
 import type { BrowserState } from "../store/browser";
-import { themeFor } from "./theme";
+import type { ThemeBackdropProps } from "./profileTheme";
+import { profileTheme } from "./theme";
 
-export type LaunchBackdrop = {
+export type LaunchBackdrop = ThemeBackdropProps & {
   dark: boolean;
   vibrancy: boolean;
   colors: [string, string];
@@ -15,6 +16,6 @@ export function launchBackdrop(s: Pick<BrowserState, "windows" | "profiles" | "u
   const w = windowId ? s.windows[windowId] : undefined;
   if (!w || w.incognito || w.kind === "small") return null;
   const dark = s.ui.appDark;
-  const theme = themeFor(`${s.profiles[w.profileId]?.color ?? "plum"}:${dark ? "dark" : "light"}`);
+  const theme = profileTheme(s.profiles[w.profileId], dark);
   return { dark, vibrancy: true, colors: theme.windowTint, ...theme.backdrop, grainOpacity: theme.grain };
 }

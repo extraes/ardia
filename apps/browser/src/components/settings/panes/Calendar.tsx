@@ -25,7 +25,7 @@ export function CalendarPane() {
       />
       <Group>
         <Row
-          title="Calendar access"
+          anchor="calendar.access"
           description={
             access === "fixture"
               ? "Development build: using calendar-fixture.json"
@@ -46,10 +46,10 @@ export function CalendarPane() {
 
       <SectionHeader title="Meeting alerts" />
       <Group>
-        <Row title="Show next meeting alert">
+        <Row anchor="calendar.nextAlert">
           <PopUp value={settings.alertLead} options={ALERT_LEADS.map((l) => ({ value: l.value, title: l.title, separatorBefore: l.value === "start" }))} onChange={(v) => updateCalendarSettings({ alertLead: v })} minWidth={170} />
         </Row>
-        <Row title="Show alerts" description="With Always, alerts also appear in Notification Center while you're in another app.">
+        <Row anchor="calendar.alertCondition">
           <PopUp
             value={settings.alertCondition}
             options={[
@@ -65,17 +65,17 @@ export function CalendarPane() {
 
       <SectionHeader title="Pinned calendar" />
       <Group>
-        <Row title="Show calendar preview" description="Hover a pinned calendar tab to see the rest of your day.">
+        <Row anchor="calendar.preview">
           <Toggle value={settings.showPreview} onChange={(v) => updateCalendarSettings({ showPreview: v })} />
         </Row>
-        <Row title="Show time to next meeting" description="A badge on the pinned calendar tab within the hour before a meeting.">
+        <Row anchor="calendar.timeToNext">
           <Toggle value={settings.showTimeToNext} onChange={(v) => updateCalendarSettings({ showTimeToNext: v })} />
         </Row>
       </Group>
 
       <SectionHeader title="Meetings" />
       <Group>
-        <Row title="Automatically group tabs for meetings" description="Joining a call makes a tab group for it; links you open from the meeting join the group.">
+        <Row anchor="calendar.autoGroup">
           <Toggle value={autoGroup} onChange={(v) => useBrowser.getState().updateSettings({ autoGroupMeetingTabs: v })} />
         </Row>
       </Group>

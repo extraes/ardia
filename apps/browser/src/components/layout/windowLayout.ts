@@ -42,6 +42,16 @@ export function setUrlAnchor(windowId: string, anchor: UrlAnchor) {
   useUrlAnchors.setState({ [windowId]: anchor });
 }
 
+type CardAnchor = { left: number; top: number; width: number; height: number };
+
+export const useCardAnchors = create<Record<string, CardAnchor>>()(() => ({}));
+
+export function setCardAnchor(windowId: string, anchor: CardAnchor) {
+  const current = useCardAnchors.getState()[windowId];
+  if (current && current.left === anchor.left && current.top === anchor.top && current.width === anchor.width && current.height === anchor.height) return;
+  useCardAnchors.setState({ [windowId]: anchor });
+}
+
 export const useToolbarExtensionsWidths = create<Record<string, number>>()(() => ({}));
 
 export function setToolbarExtensionsWidth(windowId: string, width: number) {

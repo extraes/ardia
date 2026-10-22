@@ -11,6 +11,8 @@ export const wantsPage = (t: Tab | undefined): t is Tab => !!t && !!(t.navigatio
 
 const handedOff = new Map<string, string>();
 
+export const isHandedOff = (tabId: string) => handedOff.has(tabId);
+
 export function handOff(tabId: string, profile: string) {
   handedOff.set(tabId, profile);
   prepareTabTransfer(tabId);

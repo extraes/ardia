@@ -56,6 +56,7 @@ const measure = (view: View | null): Promise<Frame | null> =>
 type Marks = { sources: Set<string>; dropInto: string | null; onto: string | null; landing: string | null; pins: boolean; pinCount: number };
 const NO_MARKS: Marks = { sources: new Set(), dropInto: null, onto: null, landing: null, pins: false, pinCount: 0 };
 const noMarks = create<Marks>()(() => NO_MARKS);
+const NO_DROP: Drop = { type: "none" };
 
 class DragController {
   items = new Map<string, Item>();
@@ -86,6 +87,7 @@ class DragController {
   private gridBase: Frame | null = null;
   private gridGrowth = 0;
   private token: object | null = null;
+  private external = 0;
   landed: { key: string; x: number; y: number } | null = null;
 
   create(key: string): Item {
@@ -137,6 +139,32 @@ class DragController {
     this.move(this.pointer.x, this.pointer.y);
   }
 
+  async beginExternal(count: number, x: number, y: number) {
+    if (this.active && !this.external) return;
+    this.reset();
+    this.setGhost(null);
+    this.external = Math.max(1, count);
+    this.sources = [this.create("external")];
+    const token = (this.token = {});
+    suppressHover(true);
+    this.pointer = { x, y };
+    this.measured = false;
+    await this.measureAll();
+    if (this.token !== token || !this.external) return;
+    this.setLanding(null);
+    this.measured = true;
+    this.move(this.pointer.x, this.pointer.y);
+  }
+
+  finishExternal(commit: boolean): TabPlacement | null {
+    if (!this.external) return null;
+    const drop = this.measured ? this.drop : NO_DROP;
+    this.reset();
+    this.token = null;
+    this.setLanding(null);
+    return commit && drop.type === "tabs" ? drop.placement : null;
+  }
+
   async tilesLaidOut() {
     const token = this.token;
     const frame = await measure(this.regions.get("tiles") ?? null);
@@ -164,15 +192,14 @@ class DragController {
   move(x: number, y: number) {
     this.pointer = { x, y };
     updateTabDrag(x, y);
-    if (!this.measured || !this.ghost) return;
-    this.ghost.position.setValue({ x: x - this.grab.x - this.rootFrame.x, y: y - this.grab.y - this.rootFrame.y });
+    if (!this.measured || (!this.ghost && !this.external)) return;
+    this.ghost?.position.setValue({ x: x - this.grab.x - this.rootFrame.x, y: y - this.grab.y - this.rootFrame.y });
     this.autoScroll(y);
     this.retarget();
   }
 
   end(commit: boolean) {
-    clearInterval(this.scrollTimer);
-    this.scrollTimer = undefined;
+    if (this.external) return void this.finishExternal(false);
     const sources = this.sources;
     const drop = this.drop;
     const ghost = this.ghost;
@@ -188,24 +215,7 @@ class DragController {
       else if (drop.type === "group" && sources[0]!.groupId) s.moveGroup(sources[0]!.groupId, drop.placement);
       else if (drop.type === "onto") s.groupOnto(ids, drop.targetId);
     }
-    for (const i of this.items.values()) {
-      i.gap.stopAnimation();
-      i.gap.setValue(0);
-    }
-    for (const i of sources) i.size.stopAnimation();
-    this.sources = [];
-    this.gapKey = null;
-    this.pitch = 0;
-    this.dropKey = "";
-    this.drop = { type: "none" };
-    this.into = null;
-    this.ghost = null;
-    this.measured = false;
-    this.gridBase = null;
-    this.gridGrowth = 0;
-    suppressHover(false);
-    this.setSources(new Set());
-    this.marks.setState({ dropInto: null, onto: null, pins: false, pinCount: 0 });
+    this.reset();
     if (!spot || !ghost) {
       this.token = null;
       this.setLanding(null);
@@ -227,6 +237,30 @@ class DragController {
       if (!at) return done();
       Animated.spring(ghost.position, { toValue: { x: at.x - this.rootFrame.x, y: at.y - this.rootFrame.y }, ...SLIDE }).start(done);
     });
+  }
+
+  private reset() {
+    clearInterval(this.scrollTimer);
+    this.scrollTimer = undefined;
+    for (const i of this.items.values()) {
+      i.gap.stopAnimation();
+      i.gap.setValue(0);
+    }
+    for (const i of this.sources) i.size.stopAnimation();
+    this.sources = [];
+    this.gapKey = null;
+    this.pitch = 0;
+    this.dropKey = "";
+    this.drop = NO_DROP;
+    this.into = null;
+    this.ghost = null;
+    this.measured = false;
+    this.gridBase = null;
+    this.gridGrowth = 0;
+    this.external = 0;
+    suppressHover(false);
+    this.setSources(new Set());
+    this.marks.setState({ dropInto: null, onto: null, pins: false, pinCount: 0 });
   }
 
   private landingSpot(drop: Drop): Promise<{ x: number; y: number } | null> | null {
@@ -302,7 +336,8 @@ class DragController {
     const dragged = new Set(this.sources.flatMap((s) => s.tabIds));
     const firstTab = (i: Item | undefined) => i?.tabIds.find((id) => !dragged.has(id)) ?? null;
     const tabsDrag = source.kind === "row" || source.kind === "tile";
-    const rowPitch = (source.kind === "group" ? (source.frame?.h ?? layout.rowHeight) : layout.rowHeight * Math.max(1, this.ghost?.count ?? 1)) + ROW_GAP;
+    const count = this.external || dragged.size;
+    const rowPitch = (source.kind === "group" ? (source.frame?.h ?? layout.rowHeight) : layout.rowHeight * Math.max(1, this.ghost?.count ?? this.external ?? 1)) + ROW_GAP;
     let drop: Drop = { type: "none" };
     let gapKey: string | null = null;
     let pitch = rowPitch;
@@ -314,14 +349,14 @@ class DragController {
     const away = x > sidebar.x + sidebar.w + 40 || x < sidebar.x - 40 || useTabDrag.getState().outside;
     const cells = live.filter((i) => i.kind === "tile").sort(byY);
     const overTiles = !away && tabsDrag && !!tiles && (this.gridBase ? overPins(y, this.pinFloor(live, tiles), this.pinning) : inside(tiles, x, y, 6));
-    if (this.gridBase) this.gridGrowth = pinGridHeight(cells.length + (overTiles ? dragged.size : 0), this.gridBase.w, layout.pinnedHeight) - this.gridBase.h;
+    if (this.gridBase) this.gridGrowth = pinGridHeight(cells.length + (overTiles ? count : 0), this.gridBase.w, layout.pinnedHeight) - this.gridBase.h;
     if (away) {
       drop = { type: "none" };
     } else if (overTiles && tiles) {
-      const before = this.gridBase ? cells[Math.min(cells.length, pinSlot(tiles, cells.length + dragged.size, layout.pinnedHeight, x, y))] : undefined;
+      const before = this.gridBase ? cells[Math.min(cells.length, pinSlot(tiles, cells.length + count, layout.pinnedHeight, x, y))] : undefined;
       drop = { type: "tabs", placement: { pinned: true, row: false, beforeId: firstTab(before) } };
       gapKey = before?.key ?? "tail:tiles";
-      pitch = this.gridBase ? dragged.size : PIN_SLOT;
+      pitch = this.gridBase ? count : PIN_SLOT;
     } else {
       const groups = live.filter((i) => i.kind === "group");
       const box = tabsDrag
@@ -346,7 +381,7 @@ class DragController {
         const before = rows.find((r) => cy(r) > y && firstTab(r) !== null);
         drop = { type: "tabs", placement: { pinned: true, row: true, beforeId: firstTab(before) } };
         gapKey = before?.key ?? "tail:pinnedRows";
-      } else if ((onto = tabsDrag ? this.ontoTarget(live, y) : null)) {
+      } else if ((onto = tabsDrag && !this.external ? this.ontoTarget(live, y) : null)) {
         drop = { type: "onto", targetId: this.items.get(onto)!.tabIds[0]! };
         gapKey = this.gapKey;
         pitch = this.pitch;
@@ -377,7 +412,7 @@ class DragController {
     this.drop = drop;
     this.into = into;
     const pins = drop.type === "tabs" && drop.placement.pinned && !drop.placement.row;
-    this.marks.setState({ dropInto: into, onto, pins, pinCount: pins ? dragged.size : 0 });
+    this.marks.setState({ dropInto: into, onto, pins, pinCount: pins ? count : 0 });
     if (gapKey !== this.gapKey) {
       const prev = this.gapKey && this.items.get(this.gapKey);
       if (prev && prev.section === "tiles" && this.gridBase && !this.pinning) prev.gap.setValue(0);

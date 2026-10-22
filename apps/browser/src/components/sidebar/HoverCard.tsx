@@ -31,14 +31,14 @@ export function HoverCard({ windowId, width, height }: { windowId: string; width
   }, [orphaned]);
   useLayoutEffect(() => setHoverSpace(windowId, height), [windowId, height]);
   const target = orphaned ? null : hover;
-  const { drawn, leaving, motion } = useHoverCardMotion(windowId, target);
+  const { drawn, leaving, entering, motion } = useHoverCardMotion(windowId, target);
   const shown = drawn ?? target;
   const player = useShowsMiniPlayer(shown?.kind === "tab" ? shown.id : undefined);
   const edge = usePlayerEdge(windowId, shown?.anchor);
   useHoverCardPlacement(motion, shown ? hoverCardOrigin(shown.anchor, player ? edge : undefined) : null, { width, height });
   if (!shown) return null;
   return (
-    <Animated.View pointerEvents={leaving ? "none" : "box-none"} style={[StyleSheet.absoluteFill, motion.style]}>
+    <Animated.View pointerEvents={leaving || entering ? "none" : "box-none"} style={[StyleSheet.absoluteFill, motion.style]}>
       <HoverContent hover={shown} windowId={windowId} player={player} />
     </Animated.View>
   );

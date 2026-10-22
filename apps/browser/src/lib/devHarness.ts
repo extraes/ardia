@@ -55,6 +55,9 @@ export function startDevHarness() {
     get extensions(): typeof import("../components/extensions/state") {
       return require("../components/extensions/state");
     },
+    get themes(): typeof import("../components/import/apply") & typeof import("../components/settings/ThemeEditor") {
+      return { ...require("../components/import/apply"), ...require("../components/settings/ThemeEditor") };
+    },
     get switcher(): typeof import("../components/sidebar/switcher") {
       return require("../components/sidebar/switcher");
     },
@@ -69,6 +72,12 @@ export function startDevHarness() {
     },
     get hoverShift(): typeof import("./hoverShift") {
       return require("./hoverShift");
+    },
+    get settingsSearch(): typeof import("../components/settings/searchState") & typeof import("../components/settings/SettingsSearch") {
+      return { ...require("../components/settings/searchState"), ...require("../components/settings/SettingsSearch") };
+    },
+    get settingsNav(): typeof import("../components/settings/windows").useSettingsNav {
+      return require("../components/settings/windows").useSettingsNav;
     },
     get preload(): typeof import("./preload") {
       return require("./preload");

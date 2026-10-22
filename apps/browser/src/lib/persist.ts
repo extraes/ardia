@@ -23,8 +23,10 @@ const serialized =
   (s: BrowserState): string =>
     JSON.stringify(serialize(s));
 
-const persistedTab = ({ navigation: _n, adoptId: _a, wakeAdoptId, ...t }: Tab) =>
-  wakeAdoptId?.startsWith("restore:") && !isIncognitoProfile(t.profileId) ? { ...t, wakeAdoptId } : t;
+const persistedTab = ({ navigation: _n, adoptId: _a, wakeAdoptId, pageIn, ...tab }: Tab) => {
+  const t = pageIn ? { ...tab, unloaded: true as const } : tab;
+  return wakeAdoptId?.startsWith("restore:") && !isIncognitoProfile(t.profileId) ? { ...t, wakeAdoptId } : t;
+};
 const publicTab = (t: { profileId: string }) => !isIncognitoProfile(t.profileId);
 
 const DOCS: Doc[] = [

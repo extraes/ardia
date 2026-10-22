@@ -255,8 +255,9 @@ try {
   await check("a tab torn off into a new window: its old window shows its next tab soon", async () => {
     if (noScreen) return noScreen;
     const w1 = await run(`return st().windows.w1.frame;`);
+    await run(`ac.actions.switchToTab("b1"); return settle(500);`);
     let row = null;
-    for (let y = 60; y <= 200 && row === null; y += 12) {
+    for (let y = 40; y <= 320 && row === null; y += 12) {
       await run(`return act("w1", "click:60,${y}").then(() => settle(250));`);
       if ((await run(`return st().windows.w1.activeTabIds.default;`)) === "g1") row = y;
     }
@@ -307,10 +308,14 @@ try {
     const { frames, w1, w2 } = drop;
     const r = regionOf(w2, H, { left: 8, top: 8, right: 8, bottom: 8 });
     const crops = frames.map((f) => crop(f, r));
-    const was = crops[0];
-    const between = crops.filter((c) => diff(c, was) > 4 && mean(c) > 3);
+    const gone = crops.findIndex((c) => mean(c) <= 3);
+    assert.ok(gone > 0, "w2 went");
+    let held = gone - 1;
+    while (held >= 2 && !(diff(crops[held], crops[held - 1]) <= 4 && diff(crops[held], crops[held - 2]) <= 4)) held--;
+    const was = crops[held];
+    const between = crops.filter((c, i) => i > held && diff(c, was) > 4 && mean(c) > 3);
     if (between.length > 1) {
-      rep.log(`w2's place, frame by frame (levels from w2 as it was, mean): ${crops.map((c) => `${diff(c, was).toFixed(0)}/${mean(c).toFixed(0)}`).join(" ")}`);
+      rep.log(`w2's place, frame by frame (levels from w2 as it was at the drop, mean): ${crops.map((c) => `${diff(c, was).toFixed(0)}/${mean(c).toFixed(0)}`).join(" ")}`);
       dump("emptied-window", [was, ...between], r);
     }
     assert.ok(between.length <= 1, `${between.length} frames of w2 neither as it was nor gone`);

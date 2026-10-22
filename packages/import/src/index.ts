@@ -21,6 +21,7 @@ export type SpaceSummary = {
   icon?: string;
   pinnedCount: number;
   tabCount: number;
+  theme?: string;
 };
 
 export type BrowserProfile = {
@@ -98,6 +99,7 @@ export type SpaceSuggestion = {
   profileId: string;
   pinned: BookmarkNode[];
   tabs: ImportedTab[];
+  theme?: string;
 };
 
 export type ProfileSuggestion = { name: string; color?: string; avatarPath?: string };

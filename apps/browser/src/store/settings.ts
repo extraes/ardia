@@ -31,6 +31,7 @@ export type Settings = {
   tabLayout: "sidebar" | "top";
   hideToolbarWhileScrolling: boolean;
   newTabPosition: "top" | "bottom";
+  newTabOpens: "page" | "commandBar";
   warnBeforeClosingLastTab: boolean;
   warnBeforeMovingTabsToProfile: boolean;
   tabReorderHaptics: boolean;
@@ -90,6 +91,7 @@ export const DEFAULT_SETTINGS: Settings = {
   tabLayout: "sidebar",
   hideToolbarWhileScrolling: true,
   newTabPosition: "bottom",
+  newTabOpens: "page",
   warnBeforeClosingLastTab: true,
   warnBeforeMovingTabsToProfile: true,
   tabReorderHaptics: true,

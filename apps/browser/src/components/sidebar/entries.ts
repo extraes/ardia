@@ -1,6 +1,7 @@
 import { useShallow } from "zustand/react/shallow";
 import { useBrowser, type BrowserState } from "../../store/browser";
 import { activeTabId, viewTabIds } from "../../store/model";
+import { hiddenEmptyCard } from "../../store/newTabBar";
 import { splitIndex, stableList } from "../../store/structure";
 
 type SidebarEntries = { tiles: string[]; pinnedRows: string[]; pinnedGroups: string[]; list: string[] };
@@ -8,7 +9,7 @@ type SidebarEntries = { tiles: string[]; pinnedRows: string[]; pinnedGroups: str
 const memo = new Map<string, { inputs: unknown[]; result: SidebarEntries }>();
 
 export function sidebarEntries(s: BrowserState, windowId: string, profileId?: string): SidebarEntries {
-  const inputs = [s.tabs, s.windows, s.groups, s.splits];
+  const inputs = [s.tabs, s.windows, s.groups, s.splits, s.settings.newTabOpens];
   const key = profileId ? `${windowId}|${profileId}` : windowId;
   const cached = memo.get(key);
   if (cached && cached.inputs.every((v, i) => v === inputs[i])) return cached.result;
@@ -41,7 +42,7 @@ function computeEntries(s: BrowserState, windowId: string, profileId?: string): 
   const seen = new Set<string>();
   for (const id of viewTabIds(s, windowId, profileId)) {
     const tab = s.tabs[id]!;
-    if (tab.liveItem && !tab.pinned) continue;
+    if ((tab.liveItem && !tab.pinned) || hiddenEmptyCard(s, tab)) continue;
     if (tab.pinned) {
       (tab.pinnedAsRow ? pinnedRows : tiles).push(id);
       continue;

@@ -44,12 +44,13 @@ engine=()
 for archive in "$dist"/ArdiaCore-*.tar.xz; do [ -f "$archive" ] && engine+=("$archive"); done
 run gh release create "v$version" -R "$repo" --prerelease --latest=false --verify-tag --title "Ardia $version" \
   --notes-file "$dist/release-notes.md" "$dmg" "$zip" "$dist/appcast.xml" "$cli" "$cli.sha256" ${engine[@]+"${engine[@]}"}
+nightly_notes="The newest nightly, always as Ardia-Nightly.dmg (https://ardia.dev/nightly). Now $version: its notes and source are at https://github.com/$repo/releases/tag/v$version. Every nightly's notes: https://ardia.dev/release-notes"
 if ! gh release view nightly -R "$repo" >/dev/null 2>&1; then
-  run gh release create nightly -R "$repo" --prerelease --latest=false --title "Ardia Nightly" \
-    --notes "The newest nightly, always as Ardia-Nightly.dmg (https://ardia.dev/nightly). Every nightly's notes: https://ardia.dev/release-notes"
+  run gh release create nightly -R "$repo" --prerelease --latest=false --title "Ardia Nightly" --notes "$nightly_notes"
 fi
 cp -c "$dmg" "$work/Ardia-Nightly.dmg"
 run gh release upload nightly -R "$repo" --clobber "$work/Ardia-Nightly.dmg"
+run gh release edit nightly -R "$repo" --notes "$nightly_notes"
 run gh release upload "$stable_tag" -R "$repo" --clobber "$dist/appcast.xml"
 
 [ "$dry" = 1 ] && { echo "dry run: nothing published"; exit 0; }

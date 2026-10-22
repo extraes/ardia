@@ -10,6 +10,7 @@ import { useBrowser, type BrowserState } from "../store/browser";
 import type { BatterySaverWhen } from "../store/settings";
 import { activeTabId, engineProfile, isIncognitoProfile, wake } from "../store/model";
 import { peekTabId } from "../store/peek";
+import { holderOf } from "../store/pinShare";
 import { splitOf } from "../store/splits";
 import { switchOn } from "./killSwitches";
 import { applyHeldReports } from "./nativeEvents";
@@ -68,6 +69,8 @@ function shownTabIds(s: BrowserState): Set<string> {
     shown.add(id);
     const peek = peekTabId(s, w.id);
     if (peek) shown.add(peek);
+    const held = s.tabs[id]?.pageIn;
+    if (held) shown.add(held);
     for (const pane of splitOf(s, id)?.tabIds ?? []) shown.add(pane);
   }
   return shown;
@@ -335,7 +338,7 @@ function reloadRecentTabs(sys: SystemState) {
   const shown = shownTabIds(s);
   const since = Date.now() - 24 * 60 * 60_000;
   const ids = Object.values(s.tabs)
-    .filter((t) => t.url && !t.navigation && !t.adoptId && !t.unloaded && !shown.has(t.id) && !isInternalTab(t) && t.lastActiveAt >= since)
+    .filter((t) => t.url && !t.navigation && !t.adoptId && !t.unloaded && !t.pageIn && !shown.has(t.id) && !isInternalTab(t) && t.lastActiveAt >= since)
     .filter((t) => s.windows[t.windowId]?.profileId === t.profileId)
     .sort((a, b) => b.lastActiveAt - a.lastActiveAt)
     .slice(0, count)
@@ -343,7 +346,7 @@ function reloadRecentTabs(sys: SystemState) {
   ids.forEach((id, i) =>
     setTimeout(() => {
       const t = store().tabs[id];
-      if (t?.url && !t.navigation && !t.adoptId) store().updateTab(id, wake(t));
+      if (t?.url && !t.navigation && !t.adoptId && !t.pageIn && !holderOf(store(), id)) store().updateTab(id, wake(t));
     }, 2000 * (i + 1)),
   );
   return ids;

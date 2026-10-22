@@ -21,8 +21,10 @@ chromium chromium-devtools-window-title.patch
 chromium chromium-devtools-control-token.patch
 chromium chromium-extension-install-prompt-hook.patch
 chromium chromium-extension-updates.patch
+chromium chromium-component-updater-security-only.patch
 chromium chromium-extension-omaha-attributes.patch
 chromium chromium-extension-management-policy-hook.patch
+chromium chromium-extension-sync-installer-hook.patch
 chromium chromium-unpacked-load-path-hook.patch
 chromium chromium-extension-window-hidden.patch
 chromium chromium-component-extension-restricted-urls.patch
@@ -46,6 +48,7 @@ chromium chromium-thaw-live-connections.patch
 chromium chromium-battery-saver-full-rate-on-input.patch
 chromium chromium-safe-browsing-off-file-types.patch
 chromium chromium-background-features-off.patch
+chromium chromium-emudhra-distrust.patch
 chromium chromium-ardia-layer.patch
 
 layer engine/chromium

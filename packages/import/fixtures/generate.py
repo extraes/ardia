@@ -681,8 +681,9 @@ def build_safari_cookies():
 
 
 
-def arc_color(r, g, b):
-    return {"red": r, "green": g, "blue": b, "alpha": 1, "colorSpace": "extendedSRGB"}
+def arc_theme(name):
+    with open(os.path.join(HERE, "arc-themes", name + ".json"), encoding="utf-8") as f:
+        return json.load(f)
 
 
 def build_arc():
@@ -746,17 +747,12 @@ def build_arc():
          "containerIDs": ["unpinned", "P-TODAY", "pinned", "P-PIN"],
          "newContainerIDs": [{"unpinned": {"_0": {"shared": {}}}}, "P-TODAY", {"pinned": {}}, "P-PIN"],
          "customInfo": {"iconType": {"emoji_v2": "🏡"},
-                        "windowTheme": {"primaryColorPalette": {"midTone": arc_color(0.2, 0.4, 0.8),
-                                                                "shadedTone": arc_color(0.1, 0.2, 0.4)},
-                                        "background": {"single": {"_0": {"style": {"color": {"_0": {
-                                            "blendedSingleColor": {"_0": {"color": arc_color(0.2, 0.4, 0.8)}}}}}}}},
-                                        "semanticColorPalette": {}}}},
+                        "windowTheme": arc_theme("green-pink")}},
         {"id": "S-WORK", "title": "Work",
          "profile": {"custom": {"_0": {"directoryBasename": "Profile 1", "machineID": "M-1"}}},
          "newContainerIDs": [{"pinned": {}}, "W-PIN", {"unpinned": {"_0": {"shared": {}}}}, "W-TODAY"],
          "customInfo": {"iconType": {"icon": "briefcase"},
-                        "windowTheme": {"background": {"gradient": {"_0": {"blendedGradient": {"_0": {
-                            "baseColors": [{"color": arc_color(1.0, 0.5, 0.0)}, {"color": arc_color(1.2, -0.1, 0.5)}]}}}}}}}},
+                        "windowTheme": arc_theme("blue-teal")}},
         {"id": "S-UNTITLED",
          "profile": {"default": True},
          "containerIDs": ["pinned", "U-PIN"],

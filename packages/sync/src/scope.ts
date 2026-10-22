@@ -27,12 +27,14 @@ export type ScopeState = {
   extra: Record<string, number[]>;
   files: Record<string, FileMeta>;
   damaged: Record<string, number>;
+  pendingSince?: Record<string, number>;
   seq: number;
   outbox: Op[];
   journal?: LogFile[];
   seen: Record<string, number>;
   joined: boolean;
   awaitRemote?: boolean;
+  applyAs?: Record<string, "joined" | "joining">;
   snapshotAt: number;
   pending: number;
 };
@@ -77,14 +79,21 @@ export type ApplyRecords = {
   known(key: string): boolean;
   now: number;
   horizon: number;
+  joined: boolean;
 };
 
 export interface Adapter {
   prefix: string;
-  extract(base: (key: string) => unknown, queued: (key: string) => boolean, now: number): Extraction | null | Promise<Extraction | null>;
+  extract(
+    base: (key: string) => unknown,
+    queued: (key: string) => boolean,
+    now: number,
+    known: (key: string) => boolean,
+  ): Extraction | null | Promise<Extraction | null>;
   apply(visible: Map<string, unknown>, changed: Set<string>, base: (key: string) => unknown, records: ApplyRecords): boolean | void | Promise<boolean | void>;
   editedAt?(value: unknown): number | undefined;
   adoptRemoteOnJoin?: boolean;
+  publishAfterPull?: boolean;
 }
 
 export type ScopeOptions = {
@@ -178,6 +187,7 @@ export function visible(state: ScopeState, prefix: string): Map<string, unknown>
 const parseBase = (json: string | undefined) => (json === undefined ? undefined : (JSON.parse(json) as unknown));
 
 const settling = new WeakMap<ScopeState, (() => void)[]>();
+const waitingAfterPull = new WeakMap<ScopeState, boolean>();
 
 function settleWhenDurable(state: ScopeState, settle: () => void) {
   const queue = settling.get(state);
@@ -195,9 +205,10 @@ function settleDurable(state: ScopeState) {
 async function publishAdapter(state: ScopeState, adapter: Adapter, clock: Clock, device: string, now: number): Promise<Set<string>> {
   const published = new Set<string>();
   if (adapter.adoptRemoteOnJoin && !state.joined) return published;
+  if (adapter.publishAfterPull && waitingAfterPull.get(state) !== false) return published;
   let pending: Set<string> | null = null;
   const queued = (key: string) => (pending ??= new Set([...state.outbox, ...(state.journal ?? []).flatMap((f) => f.ops)].map((op) => op.k))).has(key);
-  const extraction = await adapter.extract((key) => parseBase(state.base[key]), queued, now);
+  const extraction = await adapter.extract((key) => parseBase(state.base[key]), queued, now, (key) => key in state.records);
   if (!extraction) return published;
   const put = (key: string, value: unknown) => {
     const known = state.records[key];
@@ -279,7 +290,7 @@ export async function pull(state: ScopeState, transport: Transport, scope: strin
   const changed = new Set<string>();
   const parsed: { id: string; file: SyncFile }[] = [];
   const bad = (id: string) => {
-    state.damaged[id] ??= now;
+    state.damaged[id] = Math.min(state.damaged[id] ?? now, now);
     if (now - state.damaged[id]! > damagedGiveUp) {
       state.files[id] = { d: "", k: "bad", at: now };
       delete state.damaged[id];
@@ -310,6 +321,12 @@ export async function pull(state: ScopeState, transport: Transport, scope: strin
   for (const id of Object.keys(state.files)) if (!present.has(id)) delete state.files[id];
   for (const id of Object.keys(state.damaged)) if (!present.has(id)) delete state.damaged[id];
   state.pending = listing.pending.length;
+  const pendingSince: Record<string, number> = {};
+  for (const id of listing.pending) pendingSince[id] = Math.min(state.pendingSince?.[id] ?? now, now);
+  if (listing.pending.length) state.pendingSince = pendingSince;
+  else delete state.pendingSince;
+  const downloading = Object.values(pendingSince).some((at) => now - at <= damagedGiveUp);
+  waitingAfterPull.set(state, downloading || Object.keys(state.damaged).length > 0);
   return changed;
 }
 
@@ -317,13 +334,16 @@ async function applyAdapter(state: ScopeState, adapter: Adapter, keys: Set<strin
   const mine = new Set([...keys].filter((k) => k.startsWith(adapter.prefix)));
   if (!mine.size) return true;
   const view = visible(state, adapter.prefix);
+  const applyAs = (state.applyAs ??= {});
+  applyAs[adapter.prefix] ??= state.joined ? "joined" : "joining";
   let ok: boolean | void = false;
   try {
-    ok = await adapter.apply(view, mine, (key) => parseBase(state.base[key]), { known: (key) => key in state.records, now, horizon });
+    ok = await adapter.apply(view, mine, (key) => parseBase(state.base[key]), { known: (key) => key in state.records, now, horizon, joined: applyAs[adapter.prefix] === "joined" });
   } catch (error) {
     console.warn(`[sync] applying ${adapter.prefix} failed`, error);
   }
   if (ok === false) return false;
+  applyAs[adapter.prefix] = "joined";
   for (const key of mine) {
     if (view.has(key)) state.base[key] = canonical(view.get(key));
     else delete state.base[key];

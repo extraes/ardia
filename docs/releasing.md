@@ -18,6 +18,9 @@ Each has three assets, four when the engine changed:
   framework, stripped), so the app builds without a Chromium tree. `packages/ardiacore/prebuilt-engines.tsv` maps
   `engine/`'s git tree to the release and the archive's SHA-256; `packages/ardiacore/scripts/fetch-engine.sh` downloads
   it (the app's build runs it when there's no local engine build).
+- `ArdiaCore-<engine tree>-source.tar.xz`, with that archive when the engine is built on Helium (release.sh finds
+  Helium's code in the framework): copies of the GitHub tags `engine/patches/build/env.sh` pins that aren't in this
+  repo (`scripts/engine-source.sh`), and where Chromium's source is. See "Source and licenses" below.
 
 Each version's notes are a file in the repo, `docs/release-notes/<version>.md` (how to write one:
 `docs/release-notes/README.md`). The GitHub release, the update dialog and the website's
@@ -61,6 +64,22 @@ every copy on Stable sees only stable items. A copy on Nightly allows `nightly` 
   nightly in the feed it takes the stable; on nightly it takes the nightly, a newer stable, and the newest of both. It
   also checks the build-number order with Sparkle's comparator. `update-test.sh` does the stable-ignores-it half for
   every nightly's own item.
+
+## Source and licenses
+
+Every binary we publish (DMG, zip, engine archive) has its source next to it, and keeps it for as long as the binary
+stays up. That's GPL-3.0 §6(d) for the GPL parts (uBlock Origin today), and it's how we work anyway.
+
+- Every release's notes end with a Source section (`release.sh` writes it). It links the tag's tree: the app, the
+  engine's patches, `gn_defines.sh`, the step scripts and this release flow. Once the engine is built on Helium, it
+  also links the `ArdiaCore-<tree>-source.tar.xz` asset of the release that first shipped that engine
+  (`packages/ardiacore/prebuilt-engines.tsv`); `release.sh` refuses such an engine when it can't name that release.
+- The `nightly` release's body names the nightly its `Ardia-Nightly.dmg` is and links that release
+  (`publish-nightly.sh` rewrites it each time).
+- Never delete or move a `v*` tag, or a release's source asset, while its release is up. A release can come down;
+  its tag stays.
+- About Ardia and Settings › Advanced › "Source and licenses" link the running version's tag. The app carries
+  `LICENSE*` and `NOTICE` in `Contents/Resources/Licenses`.
 
 ## Once per machine
 
@@ -131,7 +150,8 @@ every copy on Stable sees only stable items. A copy on Nightly allows `nightly` 
      `<sparkle:channel>nightly</sparkle:channel>`. The new item embeds the notes' headline and body
      (Markdown, shown in Sparkle's update dialog) and links the page as its full release notes
      (`sparkle:fullReleaseNotesLink`: "You're up to date" › Version History opens it in a tab),
-   - writes `release-notes.md` (the notes' body, then the standard Install section and a link to the page) and
+   - copies `LICENSE*` and `NOTICE` into `Contents/Resources/Licenses` before signing, and checks they're there,
+   - writes `release-notes.md` (the notes' body, then the standard Install and Source sections) and
      `provenance.txt` (the commit and the engine build it shipped).
 
    `scripts/release.sh <version> --rc` builds a candidate into `dist/<version>-rc/` from the working tree, as

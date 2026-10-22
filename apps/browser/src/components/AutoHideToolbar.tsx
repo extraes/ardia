@@ -131,6 +131,42 @@ export function useToolbarMotion({
   };
 }
 
+export function AutoHideBackdrop({ tabId, mode, motion }: { tabId: string; mode: ToolbarMode; motion: Pick<ToolbarMotion, "bar"> }) {
+  const theme = useTheme();
+  const url = useBrowser((s) => s.tabs[tabId]?.url ?? "");
+  const themeColor = useTabLive(tabId, (l) => l.themeColor);
+  const extendColor = useSettings((s) => s.extendWebsiteColor);
+  const palette = toolbarPalette(theme, extendColor && url ? themeColor : null);
+  const band = useEasedColor(palette.background);
+  const { bar } = motion;
+  const H = layout.toolbarHeight;
+  const [moved, setMoved] = useState(mode !== "shown");
+  if (!moved && mode !== "shown") setMoved(true);
+  const anim = useMemo(
+    () =>
+      moved && {
+        bandScale: bar.interpolate({ inputRange: [0, 1], outputRange: [1, STRIP_HEIGHT / H] }),
+        bandLift: bar.interpolate({ inputRange: [0, 1], outputRange: [0, -BAR_ROOM / 2] }),
+        dividerTop: bar.interpolate({ inputRange: [0, 1], outputRange: [0, -BAR_ROOM] }),
+      },
+    [moved, bar, H],
+  );
+  return (
+    <View pointerEvents="none" style={{ position: "absolute", left: 0, right: 0, top: 0, height: H }}>
+      <Animated.View
+        style={{ position: "absolute", left: 0, right: 0, top: 0, height: H, backgroundColor: theme.card, transform: anim ? [{ translateY: anim.bandLift }, { scaleY: anim.bandScale }] : undefined }}
+      >
+        <Animated.View style={[StyleSheet.absoluteFill, { backgroundColor: band }]} />
+      </Animated.View>
+      {url ? (
+        <Animated.View
+          style={{ position: "absolute", left: 0, right: 0, top: H - StyleSheet.hairlineWidth, height: StyleSheet.hairlineWidth, backgroundColor: palette.divider, transform: anim ? [{ translateY: anim.dividerTop }] : undefined }}
+        />
+      ) : null}
+    </View>
+  );
+}
+
 export function AutoHideToolbar({
   tabId,
   windowId,
@@ -146,20 +182,19 @@ export function AutoHideToolbar({
   inSplit: boolean;
   focused: boolean;
   mode: ToolbarMode;
-  motion: ToolbarMotion;
+  motion: Pick<ToolbarMotion, "bar" | "fade">;
 }) {
   const theme = useTheme();
   const url = useBrowser((s) => s.tabs[tabId]?.url ?? "");
   const themeColor = useTabLive(tabId, (l) => l.themeColor);
   const extendColor = useSettings((s) => s.extendWebsiteColor);
   const palette = toolbarPalette(theme, extendColor && url ? themeColor : null);
-  const band = useEasedColor(palette.background);
   const collapsed = mode === "collapsed";
   const modeNow = useRef(mode);
   modeNow.current = mode;
 
   const peekTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
-  useEffect(() => () => clearTimeout(peekTimer.current), []);
+  useEffect(() => () => clearTimeout(peekTimer.current), [tabId]);
   const peekLater = (on: boolean, ms: number) => {
     clearTimeout(peekTimer.current);
     peekTimer.current = setTimeout(() => setToolbarPeek(tabId, on), ms);
@@ -172,9 +207,6 @@ export function AutoHideToolbar({
   const anim = useMemo(
     () =>
       moved && {
-        bandScale: bar.interpolate({ inputRange: [0, 1], outputRange: [1, STRIP_HEIGHT / H] }),
-        bandLift: bar.interpolate({ inputRange: [0, 1], outputRange: [0, -BAR_ROOM / 2] }),
-        dividerTop: bar.interpolate({ inputRange: [0, 1], outputRange: [0, -BAR_ROOM] }),
         controls: fade.interpolate({ inputRange: [0, 0.2, 0.4, 0.6, 1], outputRange: [1, 0.45, 0.15, 0, 0] }),
         label: fade.interpolate({ inputRange: [0, 0.5, 1], outputRange: [0, 0, 1] }),
         shrink: [
@@ -188,18 +220,6 @@ export function AutoHideToolbar({
 
   return (
     <View pointerEvents="box-none" style={{ position: "absolute", left: 0, right: 0, top: 0, height: H }}>
-      <Animated.View
-        pointerEvents="none"
-        style={{ position: "absolute", left: 0, right: 0, top: 0, height: H, backgroundColor: theme.card, transform: anim ? [{ translateY: anim.bandLift }, { scaleY: anim.bandScale }] : undefined }}
-      >
-        <Animated.View style={[StyleSheet.absoluteFill, { backgroundColor: band }]} />
-      </Animated.View>
-      {url ? (
-        <Animated.View
-          pointerEvents="none"
-          style={{ position: "absolute", left: 0, right: 0, top: H - StyleSheet.hairlineWidth, height: StyleSheet.hairlineWidth, backgroundColor: palette.divider, transform: anim ? [{ translateY: anim.dividerTop }] : undefined }}
-        />
-      ) : null}
       <Animated.View
         pointerEvents={collapsed ? "none" : "box-none"}
         onMouseEnter={() => modeNow.current === "peek" && clearTimeout(peekTimer.current)}

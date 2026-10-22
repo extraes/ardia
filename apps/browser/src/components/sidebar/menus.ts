@@ -24,6 +24,7 @@ import { canShare, shareTab } from "../site/share";
 import { calendarMenuItem, newLiveFolderMenuItem, runCalendarMenu, runNewLiveFolder } from "./liveMenus";
 import { openSyncedTab, syncedDevicesMenuItem } from "../../sync/menu";
 import { setSidebarUi } from "./state";
+import { toggleNewTabBar } from "../omnibox/newTabBar";
 import { GROUP_COLORS, NEUTRAL_GROUP_SWATCH, nearestGroupColor } from "./tokens";
 
 const store = () => useBrowser.getState();
@@ -247,6 +248,7 @@ export async function openGroupMenu(windowId: string, groupId: string) {
   else if (choice === "icon") void openIconPicker(windowId, target);
   else if (choice.startsWith("color:")) s.updateGroup(groupId, { color: (choice.slice(6) || null) as GroupColor | null });
   else if (choice === "newTab") {
+    if (toggleNewTabBar(windowId, { kind: "group", groupId })) return;
     const id = s.newTabInGroup(groupId);
     if (id) store().activate(id);
   }
@@ -275,7 +277,9 @@ export async function openSidebarMenu(windowId: string) {
     newLiveFolderMenuItem(),
   ]);
   if (choice && runNewLiveFolder(windowId, choice)) return;
-  if (choice === "newTab") s.newTab(windowId);
+  if (choice === "newTab") {
+    if (!toggleNewTabBar(windowId)) s.newTab(windowId);
+  }
   else if (choice === "search") setSidebarUi({ searchTabs: windowId });
   else if (choice === "clean") s.cleanUpTabs(windowId);
   else if (choice === "mute") muteAll(windowId, !muted);

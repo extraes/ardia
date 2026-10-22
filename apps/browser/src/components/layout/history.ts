@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { livePageId, withLivePage } from "../../lib/livePage";
 import { webviews } from "../../lib/webviews";
 import { useBrowser } from "../../store/browser";
 import { changedIds } from "../../store/changes";
@@ -26,14 +27,16 @@ export function useHistoryAvailability(tabId: string) {
   return { back: !shown && (back || backToNewTab), forward: shown || forward };
 }
 
-export function goBack(tabId: string) {
+export function goBack(tabId: string): void {
+  if (livePageId(tabId) !== tabId) return void withLivePage(tabId, (_, id) => goBack(id));
   const live = store().live[tabId];
   if (pageOf(tabId).newTabShown) return;
   if (live?.canGoBack) return void webviews.get(tabId)?.goBack();
   if (pageOf(tabId).backToNewTab) showNewTab(tabId);
 }
 
-export function goForward(tabId: string) {
+export function goForward(tabId: string): void {
+  if (livePageId(tabId) !== tabId) return void withLivePage(tabId, (_, id) => goForward(id));
   if (pageOf(tabId).newTabShown) return hideNewTab(tabId);
   void webviews.get(tabId)?.goForward();
 }
@@ -75,7 +78,8 @@ export type HistoryItem = {
   offset: number | "newTab";
 };
 
-export async function historyItems(tabId: string, direction: -1 | 1, max = 15): Promise<HistoryItem[]> {
+export async function historyItems(asked: string, direction: -1 | 1, max = 15): Promise<HistoryItem[]> {
+  const tabId = livePageId(asked);
   const page = pageOf(tabId);
   const list = (await webviews.get(tabId)?.navigationEntries()) ?? [];
   const current = list.findIndex((e) => e.current);
@@ -100,7 +104,8 @@ export async function historyItems(tabId: string, direction: -1 | 1, max = 15): 
   return items;
 }
 
-export async function goToHistoryItem(tabId: string, item: HistoryItem) {
+export async function goToHistoryItem(tabId: string, item: HistoryItem): Promise<void> {
+  if (livePageId(tabId) !== tabId) return withLivePage(tabId, (_, id) => void goToHistoryItem(id, item));
   const page = pageOf(tabId);
   if (item.offset === "newTab") {
     const list = (await webviews.get(tabId)?.navigationEntries()) ?? [];

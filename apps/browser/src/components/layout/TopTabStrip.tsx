@@ -1,6 +1,6 @@
 import { ContextMenuArea, FadeLabel, raiseView, setTrafficLightsCenter, Surface, Symbol, WindowDragRegion } from "@ardia/shell";
 import { createContext, Fragment, useContext, useEffect, useMemo, useRef, useState } from "react";
-import { Animated, Easing, findNodeHandle, PanResponder, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { Animated, Easing, findNodeHandle, PanResponder, Pressable, ScrollView, StyleSheet, Text, View, type ViewStyle } from "react-native";
 import { closeTab, toggleMute } from "../../lib/actions";
 import { hex, layout, ThemeScope, useTheme } from "../../lib/theme";
 import { useBrowser } from "../../store/browser";
@@ -17,6 +17,7 @@ import { modifiersOf } from "./controls";
 import { usePageStyle, usePagerPages } from "./profilePager";
 import { ProfileSwipeArea } from "./ProfileSwipe";
 import { openNewTabInSplit } from "./splitActions";
+import { toggleNewTabBar } from "../omnibox/newTabBar";
 import { setMeasuredWidth, useMeasuredWidths } from "./measuredWidths";
 import { usePeek } from "./usePeek";
 import { lightsCenter } from "./dockMotion";
@@ -41,7 +42,8 @@ import {
   type DragSlot,
 } from "./stripGroups";
 import { makeRoom, registerSlot, reorderOffsets, settleRoom, shiftRoom, SLIDE } from "./stripReorder";
-import { beginTabDrag, cancelTabDrag, endTabDrag, setDragPicture, setInsert, setInsertResolver, updateTabDrag, useTabDrag } from "./tabDrag";
+import { beginExternalDrag, beginTabDrag, cancelTabDrag, endExternalDrag, endTabDrag, moveExternalDrag, setDragPicture, setInsert, setInsertResolver, updateTabDrag, useTabDrag } from "./tabDrag";
+import { TabDropArea, type TabDropTarget } from "./fileDrop";
 import { toolbarPalette, useEasedColor, type ToolbarPalette } from "./toolbarColors";
 
 export const TOP_STRIP_HEIGHT = 42;
@@ -96,7 +98,7 @@ export function TopTabStrip({ width, floating = false, hidden = false, swipe = t
 
   return (
     <FloatingStrip.Provider value={floating}>
-      <View style={{ height: TOP_STRIP_HEIGHT }}>
+      <StripDropArea style={{ height: TOP_STRIP_HEIGHT }}>
         <WindowDragRegion style={StyleSheet.absoluteFill} />
         <View style={{ position: "absolute", left: left - flare, right: Math.max(right - flare, controls + 8), top: 0, bottom: 0, overflow: "hidden" }}>
           {pages.map((page) => (
@@ -119,8 +121,27 @@ export function TopTabStrip({ width, floating = false, hidden = false, swipe = t
         </View>
         {swipe && <ProfileSwipeArea surface="strip" style={StyleSheet.absoluteFill} pageWidth={pageWidth + flare * 2} />}
         {!floating && <StripDropHighlight left={left} right={right} />}
-      </View>
+      </StripDropArea>
     </FloatingStrip.Provider>
+  );
+}
+
+function StripDropArea({ style, children }: { style: ViewStyle; children: React.ReactNode }) {
+  const windowId = useWindowId();
+  const target: TabDropTarget = {
+    windowId,
+    enter: (_, at, token) => beginExternalDrag(windowId, at, token),
+    move: (at, token) => moveExternalDrag(windowId, at, token),
+    leave: (token) => void endExternalDrag(windowId, null, token),
+    drop: (at, token) => {
+      const beforeId = endExternalDrag(windowId, at, token);
+      return beforeId === undefined ? null : { pinned: false, beforeId };
+    },
+  };
+  return (
+    <TabDropArea target={target} style={style}>
+      {children}
+    </TabDropArea>
   );
 }
 
@@ -412,6 +433,8 @@ function pinOut(strip: () => Strip | null, from: number): Cross {
   };
 }
 
+const dockCellLeft = ({ lefts }: DragGeometry, j: number) => (j < lefts.length ? lefts[j]! : (lefts.at(-1) ?? -CELL_STEP) + CELL_STEP);
+
 function tabInIndex({ dock, top }: Strip, from: number, dx: number, grab: number): number | null {
   if (!dock || from < 0) return null;
   const left = top.lefts[from]! + dx;
@@ -435,7 +458,7 @@ function tabIn(strip: () => Strip | null, from: number, width: number): Cross {
       const s = strip();
       const j = s ? tabInIndex(s, from, dx, grab) : null;
       if (!s?.dock || j === null) return null;
-      const target = s.dock.left + s.dock.geometry.lefts[j]!;
+      const target = s.dock.left + dockCellLeft(s.dock.geometry, j);
       return {
         dx: target - (s.top.lefts[from]! + grab - PINNED_CELL / 2),
         commit: () => {
@@ -1296,7 +1319,7 @@ function NewTabButton({ windowId, geometry }: { windowId: string; geometry: Drag
       <Pressable
         onPress={(e) => {
           if (modifiersOf(e).altKey) openNewTabInSplit(windowId);
-          else useBrowser.getState().newTab(windowId);
+          else toggleNewTabBar(windowId) || useBrowser.getState().newTab(windowId);
         }}
       >
         {({ pressed }) => (

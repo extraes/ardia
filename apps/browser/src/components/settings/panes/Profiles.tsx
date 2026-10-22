@@ -3,7 +3,7 @@ import { useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Animated, Easing, PanResponder, Pressable, StyleSheet, Text, View } from "react-native";
 import { useShallow } from "zustand/react/shallow";
 import { createProfile, deleteProfile } from "../../../lib/actions";
-import { hex, PROFILE_COLORS, useTheme } from "../../../lib/theme";
+import { hex, profileAccent, useTheme } from "../../../lib/theme";
 import { useBrowser } from "../../../store/browser";
 import { useProfiles } from "../../../store/hooks";
 import { plural } from "../../../store/model";
@@ -15,6 +15,7 @@ import { ColorStack } from "../../profiles/CreateProfile";
 import { iconMenuItems, PROFILE_SYMBOLS, ProfileBadge, profileSymbol } from "../../profiles/icons";
 import { Button, Group, PopUp, Row, SectionHeader, TextField, useFormColors } from "../controls";
 import { closeSettingsSheet, showSettingsSheet } from "../sheet";
+import { ThemeSection } from "../ThemeEditor";
 import { useSettingsNav } from "../windows";
 
 const listOf = (names: string[]) => (names.length <= 2 ? names.join(" and ") : `${names.slice(0, -1).join(", ")}, and ${names.at(-1)}`);
@@ -42,7 +43,7 @@ export function ProfilesPane() {
 
       <SectionHeader title="New windows open with" />
       <Group>
-        <Row title="Default profile" description="Used for new windows. Links from other apps open in the profile you used last.">
+        <Row anchor="profiles.defaultProfile">
           <PopUp
             value={defaultId}
             options={profiles.map((p) => ({ value: p.id, title: p.name }))}
@@ -53,7 +54,7 @@ export function ProfilesPane() {
       </Group>
 
       <SectionHeader
-        title="Profiles"
+        anchor="profiles.list"
         description="Drag to reorder. ⌃1–⌃9 switch to the first nine."
         action={<Button title="Create Profile" icon="plus" onPress={() => void createProfile()} />}
       />
@@ -234,7 +235,7 @@ export function ProfileDetailsPane({ profileId }: { profileId: string }) {
   const only = useBrowser((s) => s.profileOrder.length <= 1);
   const shared = useSharedWith(profileId);
   const sharedNames = useBrowser(useShallow((s) => shared.map((id) => s.profiles[id]?.name ?? "")));
-  const sharedColors = useBrowser(useShallow((s) => shared.map((id) => PROFILE_COLORS[s.profiles[id]?.color ?? "plum"]?.swatch ?? "#888888")));
+  const sharedColors = useBrowser(useShallow((s) => shared.map((id) => profileAccent(s.profiles[id]))));
   const stats = useBrowser((s) => {
     const roots = s.bookmarks.roots[profileId];
     let bookmarks = 0;
@@ -274,27 +275,9 @@ export function ProfileDetailsPane({ profileId }: { profileId: string }) {
         <Row title="Icon" description={iconTitle(profile.icon)}>
           <Button title="Change…" onPress={() => void pickIcon()} />
         </Row>
-        <Row title="Theme colour" description="Tints this profile's windows and New Tab page.">
-          <View style={{ flexDirection: "row", gap: 7 }}>
-            {(Object.keys(PROFILE_COLORS) as ProfileColor[]).map((c) => (
-              <Pressable key={c} onPress={() => update({ color: c })} tooltip={PROFILE_COLORS[c].name}>
-                <View
-                  style={{
-                    width: 20,
-                    height: 20,
-                    borderRadius: 10,
-                    padding: 2,
-                    borderWidth: 2,
-                    borderColor: profile.color === c ? PROFILE_COLORS[c].swatch : "transparent",
-                  }}
-                >
-                  <View style={{ flex: 1, borderRadius: 8, backgroundColor: PROFILE_COLORS[c].swatch }} />
-                </View>
-              </Pressable>
-            ))}
-          </View>
-        </Row>
       </Group>
+
+      <ThemeSection profileId={profileId} />
 
       <SectionHeader title="Data" />
       <Group>

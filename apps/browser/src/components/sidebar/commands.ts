@@ -4,6 +4,8 @@ import { activeTabId, plural } from "../../store/model";
 import { awayFromPin, groupOf, selectedTabIds } from "../../store/organize";
 import { newGroupWithSelection, openIconPicker, startRename } from "./actions";
 import { closeAllTabs } from "./menus";
+import { toggleNewTabBar } from "../omnibox/newTabBar";
+import { movePinnedTitle, togglePinnedRows } from "./movePinned";
 import { setSidebarUi } from "./state";
 import { switcherStep } from "./switcher";
 
@@ -13,6 +15,7 @@ export function runSidebarCommand(command: BrowserCommand, arg: string | null, w
   switch (command) {
     case "newTabInGroup": {
       const group = groupOf(s, tabId);
+      if (toggleNewTabBar(windowId, group ? { kind: "group", groupId: group.id } : undefined)) return true;
       const id = group ? s.newTabInGroup(group.id) : s.newTab(windowId);
       if (id) useBrowser.getState().activate(id);
       return true;
@@ -35,6 +38,9 @@ export function runSidebarCommand(command: BrowserCommand, arg: string | null, w
     case "changeTabIcon":
       if (tabId) void openIconPicker(windowId, { kind: "tab", id: tabId });
       return true;
+    case "togglePinnedRow":
+      togglePinnedRows(windowId);
+      return true;
     case "returnToPinnedUrl":
       if (tabId) s.returnToPinnedUrl(tabId);
       return true;
@@ -47,6 +53,7 @@ export function runSidebarCommand(command: BrowserCommand, arg: string | null, w
 
 const SIDEBAR_WINDOW_COMMANDS = [
   "newTabInGroup", "newGroupWithTabs", "cleanUpTabs", "searchTabs", "renameTab", "changeTabIcon", "returnToPinnedUrl", "tabSwitcher",
+  "togglePinnedRow",
 ];
 
 export function sidebarMenuState(s: BrowserState, windowId: string | undefined) {
@@ -56,6 +63,7 @@ export function sidebarMenuState(s: BrowserState, windowId: string | undefined) 
   if (!windowId) disabled.push(...SIDEBAR_WINDOW_COMMANDS);
   else {
     if (!tab || !awayFromPin(tab)) disabled.push("returnToPinnedUrl");
+    titles.togglePinnedRow = movePinnedTitle(tab);
     const selected = selectedTabIds(s, windowId).filter((id) => !s.tabs[id]?.pinned);
     if (!selected.length) disabled.push("newGroupWithTabs");
     if (selected.length > 1) titles.newGroupWithTabs = `New Group with ${plural(selected.length, "Tab")}`;

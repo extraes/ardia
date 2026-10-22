@@ -24,7 +24,7 @@ export function SearchPane() {
 
   return (
     <View>
-      <SectionHeader title="Default search engine" description="Used by the command bar and the New Tab page." />
+      <SectionHeader anchor="search.defaultEngine" description="Used by the command bar and the New Tab page." />
       <Group>
         {controlling && (
           <Row
@@ -42,7 +42,7 @@ export function SearchPane() {
       </Group>
 
       <SectionHeader
-        title="Other search engines"
+        anchor="search.otherEngines"
         description="Type a shortcut and press Tab in the command bar to search a site directly."
         action={<Button title="Add…" icon="plus" onPress={() => showSettingsSheet(<EngineSheet />)} />}
       />
@@ -67,7 +67,7 @@ export function SearchPane() {
 
       <SectionHeader title="Suggestions" />
       <Group>
-        <Row title="Show search suggestions" description="Sends what you type to your search engine to suggest searches.">
+        <Row anchor="search.suggestions">
           <Toggle value={settings.searchSuggestions} onChange={(v) => useBrowser.getState().updateSettings({ searchSuggestions: v })} />
         </Row>
       </Group>

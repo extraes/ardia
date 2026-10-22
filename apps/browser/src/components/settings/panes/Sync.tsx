@@ -1,6 +1,8 @@
 import { showMenu, Symbol } from "@ardia/shell";
 import { SyncNative, type FolderInfo } from "@ardia/sync";
 import { useEffect, useState } from "react";
+import { syncFolder } from "../paneData";
+import { useResource } from "../resources";
 import { Linking, Text, View } from "react-native";
 import { useTheme } from "../../../lib/theme";
 import { useBrowser } from "../../../store/browser";
@@ -26,14 +28,11 @@ export function SyncPane() {
   const enabled = useSync((s) => s.enabled);
   const status = useSync((s) => s.status);
   const folder = useSync((s) => s.folder);
-  const [info, setInfo] = useState<FolderInfo | null>(null);
+  const [loaded, reload] = useResource(syncFolder, folder ?? null);
+  const info = loaded ?? null;
   useEffect(() => {
-    let live = true;
-    void folderInfo(folder).then((i) => live && setInfo(i));
-    return () => {
-      live = false;
-    };
-  }, [folder, enabled, status]);
+    void reload();
+  }, [enabled, status]);
 
   if (status === "unavailable") {
     return <Text style={{ marginTop: 20, fontSize: 12.5, color: theme.textSecondary }}>Sync isn’t available in this build.</Text>;
@@ -41,7 +40,7 @@ export function SyncPane() {
   return (
     <View>
       <Text style={{ marginTop: 20, fontSize: 12.5, lineHeight: 17, color: theme.textSecondary }}>
-        Sync your profiles, bookmarks, history, open tabs, pinned tabs, groups, passwords and settings across your Macs. It all goes through a folder
+        Sync your profiles, bookmarks, history, open tabs, pinned tabs, groups, passwords, extensions and settings across your Macs. It all goes through a folder
         you choose, like one in iCloud Drive, and it’s end-to-end encrypted: only your devices can read it.
       </Text>
       {enabled ? <SyncOn info={info} /> : <SyncOff info={info} />}
@@ -93,7 +92,7 @@ function SyncOff({ info }: { info: FolderInfo | null }) {
       <Group style={{ marginTop: 18 }}>
         <Row
           icon={<SyncIcon on={false} />}
-          title="Sync"
+          anchor="sync.sync"
           description={
             status === "reset" && error
               ? error
@@ -114,7 +113,7 @@ function SyncOff({ info }: { info: FolderInfo | null }) {
             </>
           )}
         </Row>
-        <Row title="Sync folder" description={info ? folderLabel(info) : " "}>
+        <Row anchor="sync.folder" description={info ? folderLabel(info) : " "}>
           <Button title="Choose…" onPress={() => void chooseSyncFolder()} />
         </Row>
         {noICloud ? (
@@ -196,7 +195,7 @@ function SyncOn({ info }: { info: FolderInfo | null }) {
   return (
     <>
       <Group style={{ marginTop: 18 }}>
-        <Row icon={<SyncIcon on={!locked} />} title="Sync" description={statusLine(status, lastSyncedAt, pending)}>
+        <Row icon={<SyncIcon on={!locked} />} anchor="sync.sync" description={statusLine(status, lastSyncedAt, pending)}>
           {locked ? (
             <Button title="Enter Recovery Phrase…" kind="primary" onPress={() => showPhraseEntry(info)} />
           ) : (
@@ -204,7 +203,7 @@ function SyncOn({ info }: { info: FolderInfo | null }) {
           )}
           <Button title="Advanced…" onPress={() => void advanced()} />
         </Row>
-        <Row title="Sync folder" description={info ? folderLabel(info) : " "} />
+        <Row anchor="sync.folder" description={info ? folderLabel(info) : " "} />
       </Group>
       {error && status !== "updated" ? (
         <View style={{ flexDirection: "row", gap: 6, marginTop: 8, paddingHorizontal: 2 }}>
@@ -230,8 +229,8 @@ function SyncOn({ info }: { info: FolderInfo | null }) {
           );
         })}
         {remoteProfiles.map((p) => (
-          <Row key={p.syncId} icon={<ProfileBadge profile={{ name: p.name, color: p.color, icon: p.icon }} size={24} />} title={p.name} description="On your other devices">
-            <Button title="Add to This Mac" onPress={() => addRemoteProfile(p.syncId)} />
+          <Row key={p.syncId} icon={<ProfileBadge profile={{ name: p.name, color: p.color, icon: p.icon }} size={24} />} title={p.name} description={remoteProfileDescription(p)}>
+            <Button title="Add to This Mac" disabled={!!p.waiting} onPress={() => addRemoteProfile(p.syncId)} />
           </Row>
         ))}
       </Group>
@@ -262,6 +261,13 @@ function SyncOn({ info }: { info: FolderInfo | null }) {
       </Group>
     </>
   );
+}
+
+function remoteProfileDescription(p: { sharesWith?: { name: string; added: boolean }; waiting?: true }): string {
+  if (p.waiting) return "On your other devices. Waiting for the profile it shares data with to sync.";
+  if (!p.sharesWith) return "On your other devices";
+  const { name, added } = p.sharesWith;
+  return added ? `On your other devices. Shares data with ${name}, which is added too.` : `On your other devices. Shares data with ${name}.`;
 }
 
 export function ago(at: number, now = Date.now()): string {

@@ -692,7 +692,8 @@ const PAGE_CASES = {
       S().groupTabs([key], { pinned: true, name: "Fresh" });
       load(key, P);
       w2 = S().createWindow({ url: "https://second.example/" });
-      load(copyIn(w2, key).id, Q);
+      S().activate(copyIn(w2, key).id);
+      load(key, Q);
       S().setFocusedWindow(w1);
     });
     await b.sync();

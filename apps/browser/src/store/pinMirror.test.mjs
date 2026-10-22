@@ -40,8 +40,10 @@ test("⌘N while a window is open: the new window shows the profile's pinned tab
   assert.equal(loaded(copy), false, "unloaded until clicked");
   assert.equal(loaded(mail), true, "the first window's page is untouched");
   S().activate(copy);
-  assert.equal(loaded(copy), true, "clicking it in the new window loads its own page");
-  assert.equal(loaded(mail), true, "and the first window keeps its page");
+  assert.equal(S().tabs[mail].windowId, b, "clicking it in the new window brings the first window's page over");
+  assert.equal(loaded(mail), true, "the same page, still loaded");
+  assert.equal(S().tabs[copy].pageIn, mail, "the first window keeps a frozen copy in its place");
+  assert.equal(loaded(copy), false);
   assert.deepEqual(pinned(a), PINS);
 });
 

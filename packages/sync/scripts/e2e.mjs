@@ -63,6 +63,21 @@ const sync = async (...names) => {
   for (const n of names) await ev(n, "return acSync.syncNow()");
 };
 
+const EXT = "hkgfoiooedgoejojocmhlaklaeopbecg";
+const engine = (name, call, args = null) =>
+  ev(name, `return globalThis.expo.modules.ArdiaCEF.engineCall(${JSON.stringify(call)}, "", ${JSON.stringify(args === null ? null : JSON.stringify(args))}).then(JSON.parse)`);
+const extension = async (name) => (await engine(name, "ac_extensions_sync_state")).extensions?.find((e) => e.id === EXT) ?? null;
+async function until(what, test, names = [], timeout = 120_000) {
+  const end = Date.now() + timeout;
+  while (Date.now() < end) {
+    const result = await test();
+    if (result) return result;
+    if (names.length) await sync(...names);
+    else await sleep(1000);
+  }
+  throw new Error(`timed out: ${what}`);
+}
+
 async function state(name) {
   return ev(
     name,
@@ -241,6 +256,45 @@ try {
   check("concurrent edits converge on both Macs", same(a, b), text({ a: data(a), b: data(b) }));
   check("the later edit wins (bookmark, setting, password)", text(a.bookmarks).includes("ACE2E Concurrent B") && a.settings.searchEngine === "google" && a.passwords.some((p) => p.includes("ACE2E-concurrent-B")));
 
+  check("the Extensions data type is on by default", (await ev("A", "return acSync.useSync.getState().types.extensions")) === true);
+  await engine("A", "ac_extensions_sync_apply", { id: EXT, record: { on: true, inc: false, pin: false } });
+  let extA = await until("A installs the Web Store extension", () => extension("A"));
+  check("A installs a small Web Store extension through Chrome's updater, without a prompt", !!extA && extA.syncable, text(extA));
+  if (!extA.approved) {
+    await ev("A", `acExtensionsApp.setEnabled("", "${EXT}", true); return true`);
+    await until("A shows Chrome's re-enable prompt", () => ev("A", "return !!acExtensionsUi.useExtensions.getState().install?.prompt"));
+    await ev("A", "return acExtensionsUi.confirmInstall().then(() => true)");
+    extA = await until("A's permissions are approved", async () => ((await extension("A"))?.approved ? extension("A") : null));
+  }
+  check("A's approval: its permissions are granted and it's on", extA.approved && extA.enabled, text(extA));
+  let extB = await until("the extension reaches B", async () => ((await extension("B"))?.approved ? extension("B") : null), ["A", "B"]);
+  check("install on A appears on B, approved and on (same version, same permissions)", extB.enabled && extB.version === extA.version, text(extB));
+  await ev("A", `return acExtensionsApp.setEnabled("", "${EXT}", false).then(() => true)`);
+  extB = await until("B follows A's disable", async () => ((await extension("B"))?.userDisabled ? extension("B") : null), ["A", "B"]);
+  check("disable on A turns it off on B", !extB.enabled && extB.userDisabled, text(extB));
+  const EXT2 = "aapbdbdomjkkjkaonfhkkikfgjllcleb";
+  const secondExtension = async (name) => (await engine(name, "ac_extensions_sync_state")).extensions?.find((e) => e.id === EXT2) ?? null;
+  await engine("A", "ac_extensions_sync_apply", { id: EXT2, record: { on: true, inc: false, pin: false } });
+  await until("A installs a second extension", () => secondExtension("A"));
+  await sync("A", "B");
+  const pendingOnB = (await engine("B", "ac_extensions_sync_state")).pending ?? [];
+  note(`B's pending sync installs before the quit: ${text(pendingOnB)}`);
+  await apps.B.quit();
+  delete apps.B;
+  await start("B");
+  const secondB = await until("B installs the second extension after a restart mid-install", () => secondExtension("B"), ["B"]);
+  check("B quit while an install was pending installs it after relaunching", !!secondB, text({ pendingOnB, secondB }));
+  await ev("B", `return acExtensionsApp.setEnabled("", "${EXT}", true).then(() => acExtensionsApp.setPinned("", "${EXT}", true)).then(() => true)`);
+  extA = await until("A follows B's enable and pin", async () => { const e = await extension("A"); return e?.enabled && e.pinned ? e : null; }, ["B", "A"]);
+  check("enable and pin on B reach A", extA.enabled && extA.pinned, text(extA));
+  await ev("B", `return globalThis.acExtensions.uninstall("${EXT}", "").then(() => true)`);
+  const record = (name) => ev(name, `return Object.values(acSync.doc().scopes).map((s) => s.records["ext:${EXT}"]?.v).find(Boolean) ?? null`);
+  await until("A receives B's removal", async () => text(await record("A")) === '{"removed":true}', ["B", "A"]);
+  for (let i = 0; i < 3; i++) await sync("A", "B");
+  check("remove on B: the record says removed on both, as a live value older Macs and compaction keep", text(await record("A")) === '{"removed":true}' && text(await record("B")) === '{"removed":true}');
+  check("remove on B: B doesn't install it again, and A keeps its copy without publishing it back (sync never uninstalls)", !(await extension("B")) && !!(await extension("A")));
+  await ev("A", `return globalThis.acExtensions.uninstall("${EXT}", "").then(() => true)`);
+  await sync("A", "B");
   const seqs = async () => text(await Promise.all(["A", "B"].map((n) => ev(n, "return Object.values(acSync.doc().scopes).map((s) => s.seq)"))));
   const before = await seqs();
   await sync("A", "B", "A", "B", "A", "B");

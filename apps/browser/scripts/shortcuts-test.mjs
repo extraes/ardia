@@ -164,6 +164,7 @@ const shortcuts = [
   ["⌃⌘W", cmd("w", 13, "control"), { command: "closeTabGroup" }, "(Chrome's)"],
   ["⌘D", cmd("d", 2), { command: "bookmarkPage" }, "⌘D"],
   ["⇧⌘D", cmd("D", 2, "shift"), { command: "bookmarkAllTabs" }, "(Chrome's)", "devtools-own"],
+  ["⌥⇧⌘D", cmd("D", 2, "option", "shift"), { command: "togglePinnedRow" }, "(Arc's ⌘D is Bookmark)"],
   ["⌥⌘B", cmd("b", 11, "option"), { command: "manageBookmarks" }, "⌥⌘B"],
   ["⌘Y", cmd("y", 16), { command: "showHistory" }, "⌘Y"],
   ["⇧⌘⌫", cmd(F(0x7f), 51, "shift"), { command: "clearBrowsingData" }, "⇧⌘⌫", "page-field"],

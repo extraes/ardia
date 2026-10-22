@@ -10,7 +10,7 @@ type Keyed = { id: string; pinKey?: string };
 export const pinKeyOf = (x: Keyed) => x.pinKey ?? x.id;
 const homeOf = (t: Pick<Tab, "url" | "pinnedUrl">) => t.pinnedUrl || t.url;
 const hasPage = (t: Tab) => !!t.navigation || !!t.adoptId;
-const mirrored = (w: BrowserWindow | undefined): w is BrowserWindow => !!w && !w.incognito && w.kind !== "small";
+export const mirrored = (w: BrowserWindow | undefined): w is BrowserWindow => !!w && !w.incognito && w.kind !== "small";
 
 type Section = { tiles: Tab[]; groups: { group: TabGroup; members: Tab[] }[] };
 

@@ -10,7 +10,7 @@
 </p>
 
 <h3 align="center">
-  <a href="https://github.com/mantrakp04/ardia/releases/latest/download/Ardia-0.2.38.dmg">Download Ardia 0.2.38 for Mac</a>
+  <a href="https://github.com/mantrakp04/ardia/releases/latest/download/Ardia-0.2.39.dmg">Download Ardia 0.2.39 for Mac</a>
 </h3>
 
 <p align="center">
@@ -43,7 +43,7 @@ Switch tabs mid-video and it floats along in the corner. Go back to its tab and 
 
 ## Your extensions come along.
 
-The Chrome Web Store just works, and its button says Add to Ardia.
+The Chrome Web Store just works, its button says Add to Ardia, and Sync takes them to your other Macs.
 
 <img src="apps/site/src/assets/shots/extensions.webp" alt="Dark Reader’s page on the Chrome Web Store, open in Ardia, with an Add to Ardia button.">
 
@@ -57,7 +57,8 @@ opt-in and never carry your sites or searches.
 - **Work stays at work.** Each profile keeps its own logins, history, extensions and colour. Swipe the sidebar to switch.
 - **Little Ardia.** ⌥⌘N opens a small window with one page and no sidebar.
 - **Groups on contact.** Drop a tab on a tab and they’re a group, named for you.
-- **Moves in for you.** Bookmarks, history, passwords and logins from Chrome, Safari, Firefox, Arc, Dia and five more. Arc’s spaces and pinned tabs too.
+- **Moves in for you.** Bookmarks, history, passwords and logins from Chrome, Safari, Firefox, Arc, Dia and five more. Arc’s spaces, pinned tabs and themes too.
+- **Paints like Arc.** Gradient themes per profile: up to three colours, some grain, some blur.
 - **Syncs through your iCloud.** End-to-end encrypted, in a folder in your own iCloud Drive. No server of ours in the middle.
 - **Command bar.** ⌘L finds tabs, history and bookmarks, does your sums, and knows doc.new and 16 friends.
 - **Tidies up.** ⌥⌘K sweeps the tabs you haven’t touched into Recently Cleaned.
@@ -83,7 +84,7 @@ Not WebKit. Not Electron. Every window is Chrome’s own, so sites, extensions a
 | Intel Macs | Apple Silicon only. | ✗ No |
 
 <h3 align="center">
-  <a href="https://github.com/mantrakp04/ardia/releases/latest/download/Ardia-0.2.38.dmg">Download Ardia 0.2.38</a>
+  <a href="https://github.com/mantrakp04/ardia/releases/latest/download/Ardia-0.2.39.dmg">Download Ardia 0.2.39</a>
 </h3>
 
 <p align="center">

@@ -252,7 +252,9 @@ curl -fsL https://github.com/mantrakp04/ardia/releases/latest/download/appcast.x
 ```
 
 When engine/ changed since the last prebuilt engine, release.sh also packed `ArdiaCore-<tree>.tar.xz` (the command
-above uploads it) and wrote its table line. Once the release is up, commit that line, so builds without a Chromium tree
+above uploads it, with `ArdiaCore-<tree>-source.tar.xz` for a Helium engine) and wrote its table line. Every release's
+notes end with a Source section linking its tag, so never delete or move a published tag
+(`docs/releasing.md` › Source and licenses). Once the release is up, commit that line, so builds without a Chromium tree
 find it (`packages/ardiacore/scripts/fetch-engine.sh`):
 
 ```bash

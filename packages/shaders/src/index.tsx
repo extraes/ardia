@@ -1,5 +1,5 @@
 import { requireNativeViewManager } from "expo-modules-core";
-import type { ViewProps } from "react-native";
+import { View, type ViewProps } from "react-native";
 
 export const DIA_SPECTRUM = ["#0358F7", "#5092C7", "#E1E1FE", "#FFD400", "#FA3D1D", "#FD02F5"];
 
@@ -16,6 +16,12 @@ export type WindowBackdropProps = ViewProps & {
   angle?: number;
   grainOpacity?: number;
   grainScale?: number;
+  themeColors?: number[];
+  themeOpacity?: number;
+  themeBaseAlpha?: number;
+  themeGrain?: number;
+  themeTexture?: "grain" | "sand" | "denim" | "tweed";
+  themeAppearance?: "auto" | "light" | "dark";
 };
 
 const NativeBackdrop = requireNativeViewManager<WindowBackdropProps>("ArdiaWindowBackdrop");
@@ -49,3 +55,18 @@ export function PowerUp({ palette = "pink", halo = null, ...props }: PowerUpProp
   );
 }
 
+
+export type ThemeSwatchProps = ViewProps & {
+  colors: number[];
+  grain?: number;
+  texture?: "grain" | "sand" | "denim" | "tweed";
+  padLightness?: number;
+};
+
+const hasThemeSwatch = !!(globalThis as { expo?: { getViewConfig?: (name: string) => unknown } }).expo?.getViewConfig?.("ArdiaThemeSwatch");
+const NativeThemeSwatch = hasThemeSwatch ? requireNativeViewManager<ThemeSwatchProps>("ArdiaThemeSwatch") : null;
+
+export function ThemeSwatch({ grain = 0, padLightness = -1, style, ...props }: ThemeSwatchProps) {
+  if (!NativeThemeSwatch) return <View pointerEvents="none" style={[style, { backgroundColor: "#80808040" }]} />;
+  return <NativeThemeSwatch pointerEvents="none" grain={grain} padLightness={padLightness} style={style} {...props} />;
+}

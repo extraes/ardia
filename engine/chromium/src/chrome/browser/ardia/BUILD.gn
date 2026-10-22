@@ -22,6 +22,8 @@ source_set("ardia") {
     "ac_extension_actions.h",
     "ac_extensions.cc",
     "ac_extensions.h",
+    "ac_extensions_sync.cc",
+    "ac_extensions_sync.h",
     "ac_external_apps.h",
     "ac_external_apps.mm",
     "ac_favicons.cc",

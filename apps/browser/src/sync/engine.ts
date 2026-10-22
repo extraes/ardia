@@ -1,5 +1,6 @@
 import { readDocument, saveDocument, writeDocument } from "@ardia/shell";
 import {
+  canonical,
   Clock,
   emptyScope,
   folderTransport,
@@ -9,6 +10,7 @@ import {
   visible,
   writtenSeq,
   type Adapter,
+  type ExtensionsAdapter,
   type FolderInfo,
   type LogFile,
   type PhraseResult,
@@ -17,7 +19,7 @@ import {
 import { create } from "zustand";
 import { useBrowser } from "../store/browser";
 import { fromLegacy } from "../legacy";
-import { isIncognitoProfile } from "../store/model";
+import { engineProfile, isIncognitoProfile } from "../store/model";
 import { DEFAULT_PROFILE_ID } from "../store/settings";
 import type { Profile } from "../store/types";
 import {
@@ -31,12 +33,18 @@ import {
   pinnedRowsAdapter,
   profilesAdapter,
   settingsAdapter,
+  sharedDataAdapter,
   type DeviceRecord,
   type DeviceTabs,
   type ProfileRecord,
+  legacyThemeOf,
+  profileThemesAdapter,
+  themeFromRecord,
+  type ShareRecord,
 } from "./adapters";
+import { extensionsAdapterFor, extensionSyncAvailable, probeExtensionSync, watchExtensionIntents } from "./extensions";
 
-type DataType = "bookmarks" | "history" | "tabs" | "pinned" | "passwords" | "settings";
+type DataType = "bookmarks" | "history" | "tabs" | "pinned" | "passwords" | "extensions" | "settings";
 
 export const DATA_TYPES: { id: DataType; title: string; description: string }[] = [
   { id: "bookmarks", title: "Bookmarks", description: "Each synced profile’s bookmarks bar and other bookmarks." },
@@ -44,6 +52,7 @@ export const DATA_TYPES: { id: DataType; title: string; description: string }[] 
   { id: "tabs", title: "Open Tabs", description: "Your other devices’ tabs show in the tab overflow menu." },
   { id: "pinned", title: "Pinned Tabs and Groups", description: "Pinned tabs and pinned tab groups." },
   { id: "passwords", title: "Passwords", description: "Saved passwords. Turning sync off never removes them from this Mac." },
+  { id: "extensions", title: "Extensions", description: "Extensions from the Chrome Web Store, whether they’re on, and whether they’re pinned." },
   { id: "settings", title: "Settings", description: "Search engine, appearance, tab and keyboard settings." },
 ];
 
@@ -51,6 +60,7 @@ type ProfileLink = {
   syncId: string;
   enabled: boolean;
   retire?: boolean;
+  themeAdopting?: true;
 };
 
 type SyncDoc = {
@@ -75,7 +85,7 @@ const APP_SCOPE = "app";
 const CYCLE_MS = 15_000;
 const AFTER_EDIT_MS = 3_000;
 
-const defaultTypes = (): Record<DataType, boolean> => ({ bookmarks: true, history: true, tabs: true, pinned: true, passwords: true, settings: true });
+const defaultTypes = (): Record<DataType, boolean> => ({ bookmarks: true, history: true, tabs: true, pinned: true, passwords: true, extensions: true, settings: true });
 
 const emptyDoc = (): SyncDoc => ({
   v: 1,
@@ -95,7 +105,7 @@ export type SyncStatus = "off" | "starting" | "updating" | "updated" | "stalled"
 
 type SyncedDevice = { id: string; name: string; lastSeen: number | null; current: boolean };
 export type RemoteTabs = { deviceId: string; name: string; tabs: { url: string; title: string }[] };
-type RemoteProfile = { syncId: string; name: string; color: Profile["color"]; icon: string | null };
+type RemoteProfile = { syncId: string; name: string; color: Profile["color"]; icon: string | null; sharesWith?: { name: string; added: boolean }; waiting?: true };
 
 type SyncUi = {
   status: SyncStatus;
@@ -132,11 +142,15 @@ let again = false;
 let timer: ReturnType<typeof setTimeout> | undefined;
 let forcePasswords = false;
 const passwordAdapters = new Map<string, Adapter>();
+const extensionAdapters = new Map<string, ExtensionsAdapter>();
 
 function load() {
   try {
     const json = readDocument(DOC);
-    if (json) doc = { ...emptyDoc(), ...(JSON.parse(json) as SyncDoc), scopes: {} };
+    if (json) {
+      const saved = JSON.parse(json) as SyncDoc;
+      doc = { ...emptyDoc(), ...saved, types: { ...defaultTypes(), ...saved.types }, scopes: {} };
+    }
     savedJson = json ?? "";
   } catch (error) {
     console.warn("[sync] couldn't read sync.json", error);
@@ -250,9 +264,12 @@ const inTodaysNames = (adapter: Adapter): Adapter => ({
 function appAdapters(retiring: boolean): Adapter[] {
   const id = doc.deviceId!;
   if (retiring) return [deviceAdapter(id, deviceName, true)];
+  const enabledLinks = () => Object.fromEntries(Object.entries(doc.profiles).filter(([, l]) => l.enabled));
   return [
     ...(doc.types.settings ? [inTodaysNames(settingsAdapter)] : []),
-    profilesAdapter(() => Object.fromEntries(Object.entries(doc.profiles).filter(([, l]) => l.enabled))),
+    sharedDataAdapter(() => doc.profiles),
+    profilesAdapter(enabledLinks),
+    profileThemesAdapter(enabledLinks, () => doc.scopes[APP_SCOPE]?.records, themeAdopted),
     deviceAdapter(id, deviceName),
   ];
 }
@@ -271,7 +288,21 @@ function profileAdapters(profileId: string, retiring: boolean): Adapter[] {
     ...(t.history && ownsData ? [inTodaysNames(historyAdapter(profileId))] : []),
     inTodaysNames(deviceTabsAdapter(profileId, id, deviceName, !t.tabs)),
     ...(t.passwords && ownsData ? [passwords] : []),
+    ...(t.extensions && ownsData && extensionSyncAvailable() ? [extensionsOf(profileId)] : []),
   ];
+}
+
+async function watchExtensions() {
+  if (!doc.enabled || !doc.types.extensions) return;
+  const s = useBrowser.getState();
+  const profiles = [...new Set(Object.entries(doc.profiles).filter(([id, l]) => l.enabled && s.profiles[id] && !s.profiles[id]!.dataId).map(([id]) => engineProfile(id)))];
+  if (profiles.length && (await probeExtensionSync(profiles[0]!))) watchExtensionIntents(profiles);
+}
+
+function extensionsOf(profileId: string): ExtensionsAdapter {
+  let adapter = extensionAdapters.get(profileId);
+  if (!adapter) extensionAdapters.set(profileId, (adapter = extensionsAdapterFor(profileId)));
+  return adapter;
 }
 
 function scheduleSync(delay = AFTER_EDIT_MS) {
@@ -296,6 +327,7 @@ async function runCycle({ retiring = false } = {}) {
   clearTimeout(timer);
   const slow = setTimeout(() => useSync.getState().status === "updated" && publishUi({ status: "updating" }), 1000);
   try {
+    await watchExtensions();
     const status = await native.chainStatus(doc.folder);
     if (status === "unavailable") return publishUi({ status: "offline", error: null });
     if (status === "missing") return await resetFromElsewhere();
@@ -303,6 +335,7 @@ async function runCycle({ retiring = false } = {}) {
     const clock = new Clock(doc.deviceId, doc.clock);
     const device = doc.deviceId;
     const app = (doc.scopes[APP_SCOPE] ??= { ...emptyScope(), awaitRemote: doc.joining });
+    settleAppliedThemes(app);
     await syncScope({
       scope: APP_SCOPE,
       state: app,
@@ -313,6 +346,7 @@ async function runCycle({ retiring = false } = {}) {
       options: { persist: persistJournal(APP_SCOPE) },
     });
     if (app.joined) linkProfiles(app);
+    confirmThemes(app);
     let pending = app.pending;
     const s = useBrowser.getState();
     for (const [profileId, link] of Object.entries(doc.profiles)) {
@@ -331,6 +365,7 @@ async function runCycle({ retiring = false } = {}) {
         options: { expired: historyExpired, persist: persistJournal(scope) },
       });
       pending += state.pending;
+      if (!retire && doc.types.extensions && !s.profiles[profileId]?.dataId && extensionSyncAvailable()) await extensionsOf(profileId).reconcile(visible(state, "ext:"), Date.now());
       if (retire) {
         delete link.retire;
         if (!exists) {
@@ -364,6 +399,59 @@ async function runCycle({ retiring = false } = {}) {
 
 const errorText = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
+function pairedTheme(app: ScopeState, syncId: string): Pick<Profile, "theme"> | null {
+  const record = app.records[`pth:${syncId}`]?.v;
+  if (record) return themeFromRecord(record);
+  const profile = app.records[`prof:${syncId}`]?.v as ProfileRecord | null | undefined;
+  return profile ? legacyThemeOf(profile) : null;
+}
+
+function settledTheme(app: ScopeState, syncId: string): boolean {
+  const record = app.records[`pth:${syncId}`]?.v;
+  return !!record && !!themeFromRecord(record);
+}
+
+function pairTheme(app: ScopeState, profileId: string, link: ProfileLink) {
+  const theme = pairedTheme(app, link.syncId);
+  if (theme) useBrowser.getState().updateProfile(profileId, theme);
+  if (settledTheme(app, link.syncId)) delete link.themeAdopting;
+  else link.themeAdopting = true;
+}
+
+function settleAppliedThemes(app: ScopeState | undefined) {
+  if (!app) return;
+  for (const link of Object.values(doc.profiles)) {
+    if (!link.themeAdopting) continue;
+    const key = `pth:${link.syncId}`;
+    const record = app.records[key]?.v;
+    if (record && themeFromRecord(record) && app.base[key] === canonical(record)) delete link.themeAdopting;
+  }
+}
+
+function confirmThemes(app: ScopeState) {
+  settleAppliedThemes(app);
+  if (app.pending > 0 || Object.keys(app.damaged).length > 0) return;
+  if (Object.values(app.files).some((f) => f.k === "bad")) return;
+  for (const link of Object.values(doc.profiles)) {
+    if (!link.themeAdopting) continue;
+    const record = app.records[`pth:${link.syncId}`];
+    if (!record || record.v === null) delete link.themeAdopting;
+  }
+}
+
+function themeAdopted(profileId: string) {
+  const link = doc.profiles[profileId];
+  if (link?.themeAdopting) delete link.themeAdopting;
+}
+
+export function adoptProfileTheme(profileId: string) {
+  const link = doc.profiles[profileId];
+  if (!link?.themeAdopting) return;
+  delete link.themeAdopting;
+  save();
+  if (doc.enabled) scheduleSync(AFTER_EDIT_MS);
+}
+
 function linkProfiles(app: ScopeState) {
   const s = useBrowser.getState();
   const remote = [...visible(app, "prof:")].map(([k, v]) => [k.slice(5), v as ProfileRecord] as const);
@@ -377,7 +465,10 @@ function linkProfiles(app: ScopeState) {
     const syncId = match ?? SyncNative!.newDeviceId();
     doc.profiles[id] = { syncId, enabled: true };
     taken.add(syncId);
-    if (match) doc.scopes[`p:${syncId}`] = { ...emptyScope(), awaitRemote: true };
+    if (match) {
+      doc.scopes[`p:${syncId}`] = { ...emptyScope(), awaitRemote: true };
+      pairTheme(app, id, doc.profiles[id]!);
+    }
   }
   for (const [id, link] of Object.entries(doc.profiles)) if (!s.profiles[id] && !link.retire) link.retire = true;
 }
@@ -412,7 +503,20 @@ function summarize(): Pick<SyncUi, "devices" | "remoteTabs" | "remoteProfiles"> 
   const linked = new Set(Object.values(doc.profiles).map((l) => l.syncId));
   const remoteProfiles = [...visible(app, "prof:")]
     .filter(([k]) => !linked.has(k.slice(5)))
-    .map(([k, v]) => ({ syncId: k.slice(5), name: (v as ProfileRecord).n, color: (v as ProfileRecord).c, icon: (v as ProfileRecord).i }));
+    .map(([k, v]): RemoteProfile => {
+      const syncId = k.slice(5);
+      const record = v as ProfileRecord;
+      const { adds, sharesWith, waitingFor } = sharedDataChain(syncId);
+      const ownerName = adds[1] ? remoteProfileRecord(adds[1])?.n : sharesWith ? useBrowser.getState().profiles[sharesWith]?.name : undefined;
+      return {
+        syncId,
+        name: record.n,
+        color: record.c,
+        icon: record.i,
+        ...(ownerName !== undefined ? { sharesWith: { name: ownerName, added: !!adds[1] } } : {}),
+        ...(waitingFor ? { waiting: true as const } : {}),
+      };
+    });
   return { devices, remoteTabs, remoteProfiles };
 }
 
@@ -494,6 +598,7 @@ export async function stopSync({ deleteData = false } = {}) {
   if (doc.deviceId) await native.forget(doc.deviceId);
   doc = { ...emptyDoc(), folder, types: doc.types };
   passwordAdapters.clear();
+  extensionAdapters.clear();
   clearJournal();
   save();
   publishUi({ status: "off", error: null });
@@ -509,21 +614,68 @@ export function setTypeSynced(type: DataType, enabled: boolean) {
 export function setProfileSynced(profileId: string, enabled: boolean) {
   const link = doc.profiles[profileId];
   if (!link) return;
-  doc.profiles[profileId] = enabled ? { syncId: link.syncId, enabled } : { ...link, enabled, retire: true };
+  doc.profiles[profileId] = enabled
+    ? { syncId: link.syncId, enabled, ...(link.themeAdopting ? { themeAdopting: true as const } : {}) }
+    : { ...link, enabled, retire: true };
   save();
   publishUi();
   scheduleSync(0);
 }
 
+const remoteProfileRecord = (syncId: string) => (doc.scopes[APP_SCOPE]?.records[`prof:${syncId}`]?.v ?? undefined) as ProfileRecord | undefined;
+
+const sharedDataOwner = (syncId: string): string | null => {
+  const owner = (doc.scopes[APP_SCOPE]?.records[`share:${syncId}`]?.v as ShareRecord | null | undefined)?.o;
+  return owner && owner !== syncId ? owner : null;
+};
+
+const linkedProfileId = (syncId: string): string | null => {
+  const profiles = useBrowser.getState().profiles;
+  return Object.entries(doc.profiles).find(([id, link]) => link.syncId === syncId && !link.retire && profiles[id])?.[0] ?? null;
+};
+
+function sharedDataChain(syncId: string): { adds: string[]; sharesWith: string | null; waitingFor?: string } {
+  const adds = [syncId];
+  for (let at = syncId; ; ) {
+    const owner = sharedDataOwner(at);
+    if (!owner) return { adds, sharesWith: null };
+    const here = linkedProfileId(owner);
+    if (here) return { adds, sharesWith: here };
+    if (!remoteProfileRecord(owner)) return { adds, sharesWith: null, waitingFor: owner };
+    if (adds.includes(owner)) {
+      const lowest = adds.slice(adds.indexOf(owner)).sort()[0]!;
+      return { adds: adds.slice(0, adds.indexOf(lowest) + 1), sharesWith: null };
+    }
+    adds.push(owner);
+    at = owner;
+  }
+}
+
+export const appScopeRecords = () => doc.scopes[APP_SCOPE]?.records ?? {};
+
 export function addRemoteProfile(syncId: string): string | null {
-  const record = doc.scopes[APP_SCOPE]?.records[`prof:${syncId}`]?.v as ProfileRecord | undefined;
-  if (!record) return null;
-  const id = useBrowser.getState().createProfile({ name: record.n, color: record.c, icon: record.i });
-  doc.profiles[id] = { syncId, enabled: true };
-  doc.scopes[`p:${syncId}`] = { ...emptyScope(), awaitRemote: true };
+  if (!remoteProfileRecord(syncId) || linkedProfileId(syncId)) return null;
+  const { adds, sharesWith, waitingFor } = sharedDataChain(syncId);
+  if (waitingFor) return null;
+  let shareWith = sharesWith;
+  for (const add of adds.reverse()) shareWith = addLinkedProfile(add, remoteProfileRecord(add)!, shareWith);
   save();
   publishUi();
   scheduleSync(0);
+  return shareWith;
+}
+
+function addLinkedProfile(syncId: string, record: ProfileRecord, shareWith: string | null): string {
+  const id = useBrowser.getState().createProfile({ name: record.n, color: record.c, icon: record.i, shareWith });
+  const app = doc.scopes[APP_SCOPE];
+  doc.profiles[id] = { syncId, enabled: true };
+  if (app) pairTheme(app, id, doc.profiles[id]!);
+  else {
+    const theme = legacyThemeOf(record);
+    if (theme) useBrowser.getState().updateProfile(id, theme);
+    doc.profiles[id]!.themeAdopting = true;
+  }
+  doc.scopes[`p:${syncId}`] = { ...emptyScope(), awaitRemote: true };
   return id;
 }
 
@@ -531,10 +683,12 @@ export function startSync() {
   if (!SyncNative) return;
   load();
   publishUi({ status: doc.enabled ? "starting" : "off" });
+  void watchExtensions();
   if (doc.enabled && doc.deviceId) {
     void SyncNative.unlock(doc.deviceId).then(async (ok) => {
       if (!ok) return publishUi({ status: "locked", error: "Enter your recovery phrase to keep syncing on this Mac." });
       await loadState();
+      settleAppliedThemes(doc.scopes[APP_SCOPE]);
       publishUi();
       scheduleSync(500);
     });

@@ -112,6 +112,7 @@ export const chromeWindows = () => Promise.resolve([]);
 export const devWindowAction = () => Promise.resolve("");
 export const engineInfo = () => Promise.resolve(null);
 export const engineCall = (name, profile, args) => globalThis.acTestEngineCall?.(name, profile, args) ?? Promise.resolve({});
+export const onEngineEvent = () => ({ remove() {} });
 export const prepareTabTransfer = () => {};
 export const releaseTabTransfer = () => {};
 export const claimLaunchTab = () => {};

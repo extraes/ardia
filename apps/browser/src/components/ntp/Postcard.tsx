@@ -2,7 +2,7 @@ import { WindowBackdrop } from "@ardia/shaders";
 import { Surface, Symbol, VisualEffect } from "@ardia/shell";
 import { useEffect, useRef, useState } from "react";
 import { AccessibilityInfo, Animated, Easing, Image, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
-import { hex, PROFILE_COLORS, useTheme } from "../../lib/theme";
+import { hex, profileAccent, useTheme } from "../../lib/theme";
 import { useBrowser } from "../../store/browser";
 import { useWindowId } from "../../store/hooks";
 import { useHover } from "../primitives";
@@ -25,8 +25,7 @@ const cardFrame = (size: { width: number }) => ({
 
 function useArtworkColors(): [string, string] {
   const windowId = useWindowId();
-  const color = useBrowser((s) => s.profiles[s.windows[windowId]?.profileId ?? ""]?.color ?? "plum");
-  const swatch = PROFILE_COLORS[color]?.swatch ?? PROFILE_COLORS.plum.swatch;
+  const swatch = useBrowser((s) => profileAccent(s.profiles[s.windows[windowId]?.profileId ?? ""]));
   return [mix(swatch, "#FFFFFF", 0.45), mix(swatch, "#10121A", 0.5)];
 }
 

@@ -47,11 +47,19 @@ public class SystemModule: Module {
 
     AsyncFunction("openFile") { (path: String) -> Bool in
       guard FileManager.default.fileExists(atPath: path) else { return false }
+      if FileDropView.background {
+        NSLog("ArdiaSystem: background instance, not opening %@", path)
+        return true
+      }
       return NSWorkspace.shared.open(URL(fileURLWithPath: path))
     }.runOnQueue(.main)
 
     AsyncFunction("revealFile") { (path: String) -> Bool in
       guard FileManager.default.fileExists(atPath: path) else { return false }
+      if FileDropView.background {
+        NSLog("ArdiaSystem: background instance, not revealing %@", path)
+        return true
+      }
       NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)])
       return true
     }.runOnQueue(.main)
@@ -195,6 +203,10 @@ final class FileDragView: ExpoView, NSDraggingSource {
     guard hypot(p.x - start.x, p.y - start.y) > 4 else { return }
     downAt = nil
     let url = URL(fileURLWithPath: path)
+    if FileDropView.background {
+      FileDropView.lastFileDrag = [url]
+      return
+    }
     let item = NSDraggingItem(pasteboardWriter: url as NSURL)
     let icon = NSWorkspace.shared.icon(forFile: path)
     let local = convert(event.locationInWindow, from: nil)
@@ -208,7 +220,7 @@ final class FileDragView: ExpoView, NSDraggingSource {
   }
 
   func draggingSession(_ session: NSDraggingSession, sourceOperationMaskFor context: NSDraggingContext) -> NSDragOperation {
-    context == .outsideApplication ? [.copy, .generic] : []
+    [.copy, .generic]
   }
 }
 
@@ -236,3 +248,260 @@ enum HapticLog {
     }
   }
 }
+public class FileDropModule: Module {
+  public func definition() -> ModuleDefinition {
+    Name("ArdiaFileDrop")
+
+    View(FileDropView.self) {
+      Events("onDropUpdate")
+    }
+
+    AsyncFunction("devDrag") { (windowId: String, action: String, x: Double, y: Double, payload: [String: Any]?) -> String in
+      #if DEBUG
+      return DevDragSession.act(windowId: windowId, action: action, x: x, y: y, payload: payload ?? [:])
+      #else
+      return "debug builds only"
+      #endif
+    }.runOnQueue(.main)
+
+    AsyncFunction("devLastFileDrag") { () -> [String] in
+      #if DEBUG
+      return FileDropView.lastFileDrag.map(\.path)
+      #else
+      return []
+      #endif
+    }.runOnQueue(.main)
+  }
+}
+
+enum DroppedLinks {
+  static let maxItems = 50
+  static let linkFileExtensions: Set<String> = ["webloc", "inetloc", "url"]
+  private static let maxLinkFileSize = 64 * 1024
+
+  static func webURL(_ raw: String) -> String? {
+    let text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard text.count < 8192, let url = URL(string: text), let scheme = url.scheme?.lowercased(),
+          scheme == "http" || scheme == "https", url.host?.isEmpty == false else { return nil }
+    return url.absoluteString
+  }
+
+  static func hostLike(_ raw: String) -> String? {
+    let text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !text.isEmpty, text.count < 2048, text.rangeOfCharacter(from: .whitespacesAndNewlines) == nil else { return nil }
+    if let colon = text.firstIndex(of: ":") {
+      let scheme = text[..<colon]
+      if !scheme.isEmpty, scheme.allSatisfy({ $0.isLetter || $0.isNumber || "+.-".contains($0) }), !scheme.contains(".") {
+        return webURL(text)
+      }
+    }
+    return text.contains(".") ? text : nil
+  }
+
+  static func linkTarget(_ file: URL) -> String? {
+    let size = (try? file.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? Int.max
+    guard size <= maxLinkFileSize, let data = try? Data(contentsOf: file) else { return nil }
+    if file.pathExtension.lowercased() == "url" {
+      let text = String(data: data, encoding: .utf8) ?? String(data: data, encoding: .isoLatin1) ?? ""
+      for line in text.components(separatedBy: .newlines) where line.lowercased().hasPrefix("url=") {
+        return webURL(String(line.dropFirst(4)))
+      }
+      return nil
+    }
+    let plist = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any]
+    return (plist?["URL"] as? String).flatMap(webURL)
+  }
+
+  static func fileURLs(_ pasteboard: NSPasteboard) -> [URL] {
+    (pasteboard.pasteboardItems ?? []).compactMap { item -> URL? in
+      guard let raw = item.string(forType: .fileURL), let url = URL(string: raw), url.isFileURL else { return nil }
+      let path = ((url as NSURL).filePathURL ?? url).standardizedFileURL
+      return path.isFileURL && path.path.hasPrefix("/") ? path : nil
+    }
+  }
+
+  static func webURLs(_ pasteboard: NSPasteboard) -> [String] {
+    (pasteboard.pasteboardItems ?? []).compactMap { $0.string(forType: .URL).flatMap(webURL) }
+  }
+
+  static func items(_ pasteboard: NSPasteboard) -> [[String: String]] {
+    let files = fileURLs(pasteboard)
+    if !files.isEmpty {
+      return Array(files.prefix(maxItems).compactMap { file -> [String: String]? in
+        if linkFileExtensions.contains(file.pathExtension.lowercased()) { return linkTarget(file).map { ["kind": "url", "url": $0] } }
+        return FileManager.default.fileExists(atPath: file.path) ? ["kind": "file", "url": file.absoluteString] : nil
+      })
+    }
+    let links = webURLs(pasteboard)
+    if !links.isEmpty { return links.prefix(maxItems).map { ["kind": "url", "url": $0] } }
+    if let text = pasteboard.string(forType: .string), let candidate = hostLike(text) {
+      return [webURL(candidate).map { ["kind": "url", "url": $0] } ?? ["kind": "text", "text": candidate]]
+    }
+    return []
+  }
+
+  static func count(_ pasteboard: NSPasteboard) -> Int {
+    items(pasteboard).count
+  }
+}
+
+final class FileDropView: ExpoView {
+  static let background = ProcessInfo.processInfo.environment["ARDIA_BACKGROUND"] == "1"
+  static var lastFileDrag: [URL] = []
+
+  let onDropUpdate = EventDispatcher()
+  private var count = 0
+
+  required init(appContext: AppContext? = nil) {
+    super.init(appContext: appContext)
+    registerForDraggedTypes([.fileURL, .URL, .string])
+  }
+
+  private func emit(_ phase: String, _ info: NSDraggingInfo, items: [[String: String]] = []) {
+    let p = convert(info.draggingLocation, from: nil)
+    onDropUpdate(["phase": phase, "x": p.x, "y": isFlipped ? p.y : bounds.height - p.y, "count": count, "items": items])
+  }
+
+  private func operation(_ info: NSDraggingInfo) -> NSDragOperation {
+    guard count > 0 else { return [] }
+    let mask = info.draggingSourceOperationMask
+    if mask.contains(.copy) { return .copy }
+    if mask.contains(.generic) { return .generic }
+    return mask.contains(.link) ? .link : []
+  }
+
+  override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
+    count = DroppedLinks.count(sender.draggingPasteboard)
+    guard count > 0 else { return [] }
+    emit("enter", sender)
+    return operation(sender)
+  }
+
+  override func draggingUpdated(_ sender: NSDraggingInfo) -> NSDragOperation {
+    guard count > 0 else { return [] }
+    emit("move", sender)
+    return operation(sender)
+  }
+
+  override func draggingExited(_ sender: NSDraggingInfo?) {
+    guard count > 0 else { return }
+    if let sender { emit("exit", sender) } else { onDropUpdate(["phase": "exit", "x": 0, "y": 0, "count": count, "items": []]) }
+    count = 0
+  }
+
+  override func draggingEnded(_ sender: NSDraggingInfo) {
+    guard count > 0 else { return }
+    emit("exit", sender)
+    count = 0
+  }
+
+  override func prepareForDragOperation(_ sender: NSDraggingInfo) -> Bool {
+    count > 0
+  }
+
+  override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
+    guard count > 0 else { return false }
+    let items = DroppedLinks.items(sender.draggingPasteboard)
+    emit("drop", sender, items: items)
+    count = 0
+    return !items.isEmpty
+  }
+
+}
+
+#if DEBUG
+final class DevDraggingInfo: NSObject, NSDraggingInfo {
+  let draggingDestinationWindow: NSWindow?
+  let draggingLocation: NSPoint
+  let draggingPasteboard: NSPasteboard
+  let draggingSequenceNumber: Int
+  let draggingSourceOperationMask: NSDragOperation = [.copy, .link, .generic, .move]
+  var draggedImageLocation: NSPoint { draggingLocation }
+  var draggedImage: NSImage? { nil }
+  var draggingSource: Any? { nil }
+  var draggingFormation: NSDraggingFormation = .default
+  var animatesToDestination = false
+  var numberOfValidItemsForDrop = 0
+  var springLoadingHighlight: NSSpringLoadingHighlight { .none }
+
+  init(window: NSWindow, location: NSPoint, pasteboard: NSPasteboard, sequence: Int) {
+    draggingDestinationWindow = window
+    draggingLocation = location
+    draggingPasteboard = pasteboard
+    draggingSequenceNumber = sequence
+  }
+
+  func slideDraggedImage(to screenPoint: NSPoint) {}
+  func enumerateDraggingItems(options enumOpts: NSDraggingItemEnumerationOptions = [], for view: NSView?, classes classArray: [AnyClass],
+                              searchOptions: [NSPasteboard.ReadingOptionKey: Any] = [:],
+                              using block: (NSDraggingItem, Int, UnsafeMutablePointer<ObjCBool>) -> Void) {}
+  func resetSpringLoading() {}
+}
+
+enum DevDragSession {
+  private static var pasteboard: NSPasteboard?
+  private static weak var target: FileDropView?
+  private static var sequence = 0
+
+  static func act(windowId: String, action: String, x: Double, y: Double, payload: [String: Any]) -> String {
+    guard let window = WindowManager.shared.windows[windowId], let content = window.contentView, let frameView = content.superview else { return "no window" }
+    if pasteboard == nil || !payload.isEmpty {
+      let board = NSPasteboard.withUniqueName()
+      board.clearContents()
+      var writers: [NSPasteboardWriting] = []
+      if payload["fileDrag"] as? Bool == true { writers += FileDropView.lastFileDrag.map { $0 as NSURL } }
+      writers += (payload["files"] as? [String] ?? []).map { URL(fileURLWithPath: $0) as NSURL }
+      writers += (payload["urls"] as? [String] ?? []).compactMap { NSURL(string: $0) }
+      if let text = payload["text"] as? String { writers.append(text as NSString) }
+      for raw in payload["publicURLs"] as? [String] ?? [] {
+        let item = NSPasteboardItem()
+        item.setString(raw, forType: .URL)
+        writers.append(item)
+      }
+      guard !writers.isEmpty else { return "nothing to drag" }
+      board.writeObjects(writers)
+      pasteboard = board
+      sequence += 1
+    }
+    guard let board = pasteboard else { return "no drag" }
+    let local = NSPoint(x: x, y: content.isFlipped ? y : content.bounds.height - y)
+    let location = content.convert(local, to: nil)
+    let info = DevDraggingInfo(window: window, location: location, pasteboard: board, sequence: sequence)
+    let types = Set(board.types ?? [])
+    var under = frameView.hitTest(location)
+    while let view = under, Set(view.registeredDraggedTypes).isDisjoint(with: types) { under = view.superview }
+    let ours = under as? FileDropView
+    let name = { (view: NSView?) in view.map { NSStringFromClass(type(of: $0)) } ?? "none" }
+    func finish() {
+      pasteboard = nil
+      target = nil
+    }
+    if action == "cancel" || action == "end" {
+      if action == "cancel" { target?.draggingExited(info) }
+      target?.draggingEnded(info)
+      finish()
+      return action == "cancel" ? "cancelled" : "ended"
+    }
+    var operation: NSDragOperation = []
+    if ours !== target {
+      target?.draggingExited(info)
+      target = ours
+      operation = ours?.draggingEntered(info) ?? []
+    } else {
+      operation = ours?.draggingUpdated(info) ?? []
+    }
+    guard action == "drop" else { return "\(name(under)) \(operation.rawValue)" }
+    defer { finish() }
+    guard let view = ours, !operation.isEmpty else {
+      ours?.draggingExited(info)
+      ours?.draggingEnded(info)
+      return "\(name(under)) refused"
+    }
+    guard view.prepareForDragOperation(info) else { return "\(name(view)) refused prepare" }
+    let performed = view.performDragOperation(info)
+    view.concludeDragOperation(info)
+    view.draggingEnded(info)
+    return "\(name(view)) \(performed ? "performed" : "declined")"
+  }
+}
+#endif

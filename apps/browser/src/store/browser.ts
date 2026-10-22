@@ -7,6 +7,7 @@ import { IDLE_LIVE, isIncognitoProfile, pinnedFirst } from "./model";
 import { createOrganizeSlice, forgetClosedPrivateWindows, keptDeletedGroups, livePinTable, notePinChoices, type OrganizeSlice } from "./organize";
 import { createPeekSlice, settlePeeks, type PeekSlice } from "./peek";
 import { mirrorPins } from "./pinMirror";
+import { settleSharedPins } from "./pinShare";
 import { createProfilesSlice, DEFAULT_PROFILE, engineIdOf, type ProfilesSlice } from "./profiles";
 import { createSettingsSlice, DEFAULT_SETTINGS, migrateSavedSettings, type SettingsSlice } from "./settings";
 import { createSplitsSlice, sanitizeSplits, type SplitsSlice } from "./splits";
@@ -110,7 +111,7 @@ export const useBrowser = create<BrowserState>()(transactions.middleware(batched
     const tabs: Record<string, Tab> = {};
     for (const t of Object.values(data.tabs ?? {})) {
       if (!rawWindows[t.windowId] || !profileOk(t.profileId)) continue;
-      const { adoptId: _, ...rest } = t;
+      const { adoptId: _, pageIn: _held, ...rest } = t;
       const { pinnedAsRow, ...kept } = rest;
       tabs[t.id] = { ...kept, ...(pinnedAsRow && kept.pinned ? { pinnedAsRow } : {}), navigation: null, pinnedUrl: kept.pinnedUrl ?? (kept.pinned ? kept.url || null : null) };
     }
@@ -176,7 +177,7 @@ export const useBrowser = create<BrowserState>()(transactions.middleware(batched
         lastProfileId: data.lastProfileId && profiles[data.lastProfileId] ? data.lastProfileId : null,
       },
     };
-    for (const w of Object.values(windows)) next = apply(next, activated(next, w.activeTabIds[w.profileId]!));
+    for (const id of next.ui.focusOrder) next = apply(next, activated(next, windows[id]!.activeTabIds[windows[id]!.profileId]!));
     set(next);
   },
 }))));
@@ -201,7 +202,8 @@ useBrowser.subscribe((s, prev) => {
 let mirroring = 0;
 useBrowser.subscribe((s, prev) => {
   if (mirroring > 3) return;
-  const next = mirrorPins(s, prev);
+  const settled = settleSharedPins(s, prev);
+  const next = mirrorPins(settled ?? s, prev) ?? settled;
   if (!next) return;
   mirroring++;
   try {

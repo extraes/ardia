@@ -3,7 +3,7 @@ import type { StateCreator } from "zustand";
 import type { BrowserState } from "./browser";
 import { engineProfile, isIncognitoProfile, privateSession } from "./model";
 import { originalProfile } from "./small";
-import type { FindState, WindowUi } from "./types";
+import type { FindState, NewTabTarget, WindowUi } from "./types";
 
 export type UiSlice = {
   ui: {
@@ -18,7 +18,7 @@ export type UiSlice = {
 
   setFocusedWindow(id: string): void;
   setAppDark(dark: boolean): void;
-  openPanel(windowId: string, initialText?: string): void;
+  openPanel(windowId: string, initialText?: string, newTab?: NewTabTarget): void;
   closePanel(windowId: string): void;
   setDownloadsOpen(windowId: string, open: boolean): void;
   setFind(tabId: string, patch: Partial<FindState>): void;
@@ -75,8 +75,8 @@ export const createUiSlice: StateCreator<BrowserState, [], [], UiSlice> = (set, 
     if (get().ui.appDark !== appDark) set((s) => ({ ui: { ...s.ui, appDark } }));
   },
 
-  openPanel(windowId, initialText = "") {
-    set((s) => patchWindowUi(s, windowId, { panel: { open: true, initialText } }));
+  openPanel(windowId, initialText = "", newTab) {
+    set((s) => patchWindowUi(s, windowId, { panel: newTab ? { open: true, initialText, newTab } : { open: true, initialText } }));
   },
 
   closePanel(windowId) {

@@ -37,7 +37,8 @@ export function useHoverCardMotion<T>(key: string, target: T | null) {
   const [motion] = useState(createMotion);
   const [drawn, setDrawn] = useState<T | null>(null);
   const [leaving, setLeaving] = useState(false);
-  const state = useRef({ drawn: null as T | null, leaving: false, run: 0 });
+  const [entering, setEntering] = useState(false);
+  const state = useRef({ drawn: null as T | null, leaving: false, run: 0, fade: 0 });
 
   useLayoutEffect(() => {
     if (!__DEV__) return;
@@ -59,13 +60,18 @@ export function useHoverCardMotion<T>(key: string, target: T | null) {
       if (fresh) {
         motion.opacity.setValue(0);
         motion.scale.setValue(HOVER_CARD_FROM_SCALE);
+        setEntering(true);
       }
-      Animated.timing(motion.opacity, { toValue: 1, duration: HOVER_CARD_FADE_MS, easing: fade, useNativeDriver: true }).start();
+      const fadeIn = ++s.fade;
+      Animated.timing(motion.opacity, { toValue: 1, duration: HOVER_CARD_FADE_MS, easing: fade, useNativeDriver: true }).start(({ finished }) => {
+        if (finished && state.current.fade === fadeIn) setEntering(false);
+      });
       Animated.spring(motion.scale, { toValue: 1, ...springConfig(HOVER_CARD_IN_SPRING), useNativeDriver: true }).start();
       return;
     }
     if (!s.drawn || s.leaving) return;
     s.leaving = true;
+    s.fade++;
     setLeaving(true);
     Animated.spring(motion.scale, { toValue: HOVER_CARD_FROM_SCALE, ...springConfig(HOVER_CARD_OUT_SPRING), useNativeDriver: true }).start();
     Animated.timing(motion.opacity, { toValue: 0, duration: HOVER_CARD_FADE_MS, easing: fade, useNativeDriver: true }).start(({ finished }) => {
@@ -75,6 +81,7 @@ export function useHoverCardMotion<T>(key: string, target: T | null) {
       state.current.leaving = false;
       setDrawn(null);
       setLeaving(false);
+      setEntering(false);
     });
   }, [target]);
 
@@ -86,7 +93,7 @@ export function useHoverCardMotion<T>(key: string, target: T | null) {
     [],
   );
 
-  return { drawn, leaving, motion };
+  return { drawn, leaving, entering, motion };
 }
 
 export function useHoverCardPlacement(

@@ -13,6 +13,8 @@ import { runBarAction } from "./omnibox/actions";
 import { traceOmnibox, useOmniboxDriver } from "./omnibox/devDriver";
 import { registerHeroBar, savedNtpQuery, saveNtpQuery, type BarSnapshot } from "./omnibox/barState";
 import { dispositionFor, openFromBar, switchFromBar, type Disposition } from "./omnibox/open";
+import { openFromNewTabBar } from "./omnibox/newTabBar";
+import type { NewTabTarget } from "../store/types";
 import { clipboardPasteAction, pasteMenuItem, pasteTarget, readClipboard } from "./omnibox/paste";
 import { ScopeChip } from "./omnibox/ScopeChip";
 import { SuggestionIcon, SuggestionList, isRemovable, type RowActions } from "./omnibox/SuggestionRow";
@@ -54,10 +56,12 @@ export function Omnibox({
   initialText = "",
   onCancel,
   onDone = onCancel,
+  opensTab,
 }: {
   variant: Variant;
   tabId: string;
   initialText?: string;
+  opensTab?: NewTabTarget;
   onCancel?(): void;
   onDone?(): void;
 }) {
@@ -65,7 +69,7 @@ export function Omnibox({
   const windowId = useWindowId();
   const profileId = useWindowProfileId();
   const engine = useBrowser((s) => defaultSearchEngine(s.settings));
-  const currentUrl = useBrowser((s) => s.tabs[tabId]?.url ?? "");
+  const currentUrl = useBrowser((s) => (opensTab ? "" : (s.tabs[tabId]?.url ?? "")));
   const hero = variant === "hero";
   const dropdown = variant === "sidebar";
 
@@ -161,6 +165,7 @@ export function Omnibox({
 
   const go = (url: string, disposition: Disposition = "current") => {
     if (!url) return;
+    if (opensTab && disposition !== "newWindow") return openFromNewTabBar(windowId, opensTab, url);
     if (disposition === "current") journeyNavigate(tabId);
     openFromBar(url, tabId, disposition);
     if (disposition !== "current") dismiss();
@@ -175,7 +180,7 @@ export function Omnibox({
     }
     switch (s.kind) {
       case "page":
-        if (s.tabId) {
+        if (s.tabId && !(opensTab && disposition === "newTab")) {
           switchFromBar(s.tabId, s.url, tabId, disposition);
           if (hero && disposition === "current") reset();
           return;
@@ -375,7 +380,7 @@ export function Omnibox({
         }
       }}
       onChangeText={onChangeText}
-      placeholder={scope ? `Search ${scope.name}` : hero ? "Ask anything…" : "Search or enter address"}
+      placeholder={scope ? `Search ${scope.name}` : "Search or enter address"}
       placeholderTextColor={theme.placeholder}
       selectionColor={theme.selection}
       enableFocusRing={false}
@@ -442,12 +447,8 @@ export function Omnibox({
     >
       <AddChip tabId={tabId} onGo={barActions.go} />
       <View style={{ flex: 1 }} />
-      <IconButton icon="mic" size={14} color={theme.textTertiary} tooltip="Dictation" onPress={barActions.dictate} />
-      {hero ? (
-        <SendButton active={!!typed.trim()} onPress={barActions.choose} />
-      ) : (
-        <GoButton label={destinationLabel(current)} onPress={barActions.choose} />
-      )}
+      <IconButton icon="mic" size={14} color={theme.textTertiary} tooltip="Dictate" onPress={barActions.dictate} />
+      <GoButton label={destinationLabel(current)} enabled={!hero || !!typed.trim()} onPress={barActions.choose} />
     </View>
   );
 
@@ -546,58 +547,39 @@ const AddChip = memo(function AddChip({ tabId, onGo }: { tabId: string; onGo(url
           gap: 5,
         }}
       >
-        <Symbol name="plus" size={11} weight="medium" color={theme.chipText} style={{ width: 14, height: 14 }} />
-        <Text style={{ fontSize: 13, color: theme.chipText }}>Add tabs or files</Text>
+        <Symbol name="arrow.up.right" size={10} weight="medium" color={theme.chipText} style={{ width: 14, height: 14 }} />
+        <Text style={{ fontSize: 13, color: theme.chipText }}>Open a tab or file</Text>
       </View>
     </Pressable>
     </View>
   );
 });
 
-const GoButton = memo(function GoButton({ label, onPress }: { label: string; onPress(): void }) {
+const GoButton = memo(function GoButton({ label, enabled, onPress }: { label: string; enabled: boolean; onPress(): void }) {
   const theme = useTheme();
   const { hovered, hoverProps } = useHover();
+  const text = enabled ? theme.goButtonText : theme.textTertiary;
   return (
     <View {...hoverProps} style={{ marginLeft: 8 }}>
-    <Pressable onPress={onPress}>
+    <Pressable onPress={onPress} disabled={!enabled} accessibilityRole="button" accessibilityLabel={label}>
       <View
         style={{
           minWidth: 99,
           height: 32,
           paddingHorizontal: 16,
           borderRadius: 16,
-          backgroundColor: theme.goButton,
-          opacity: hovered ? 0.9 : 1,
+          backgroundColor: enabled ? theme.goButton : theme.goButtonIdle,
+          opacity: enabled && hovered ? 0.9 : 1,
           flexDirection: "row",
           alignItems: "center",
           justifyContent: "center",
           gap: 6,
         }}
       >
-        <Text numberOfLines={1} style={{ fontSize: 15, fontWeight: "600", color: theme.goButtonText }}>{label}</Text>
-        <Symbol name="return" size={11} weight="medium" color={theme.goButtonText + "99"} style={{ width: 14, height: 14 }} />
+        <Text numberOfLines={1} style={{ fontSize: 15, fontWeight: "600", color: text }}>{label}</Text>
+        <Symbol name="return" size={11} weight="medium" color={enabled ? text + "99" : text} style={{ width: 14, height: 14 }} />
       </View>
     </Pressable>
     </View>
-  );
-});
-
-const SendButton = memo(function SendButton({ active, onPress }: { active: boolean; onPress(): void }) {
-  const theme = useTheme();
-  return (
-    <Pressable onPress={onPress} disabled={!active} style={{ marginLeft: 11.5 }}>
-      <View
-        style={{
-          width: 30,
-          height: 30,
-          borderRadius: 15,
-          alignItems: "center",
-          justifyContent: "center",
-          backgroundColor: active ? theme.goButton : theme.sendIdle,
-        }}
-      >
-        <Symbol name="arrow.up" size={13} weight="semibold" color={active ? theme.goButtonText : theme.textTertiary} style={{ width: 16, height: 16 }} />
-      </View>
-    </Pressable>
   );
 });

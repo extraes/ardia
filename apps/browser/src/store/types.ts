@@ -3,6 +3,27 @@ export type Frame = [number, number, number, number];
 
 export type ProfileColor = "plum" | "blue" | "purple" | "pink" | "red" | "orange" | "yellow" | "green" | "neutral";
 
+export type ThemeColor = { r: number; g: number; b: number; a: number };
+
+export type ThemeStop = { color: ThemeColor; x: number; y: number };
+
+export type ThemeMode = "auto" | "light" | "dark";
+
+export type ThemeTexture = "grain" | "sand" | "denim" | "tweed";
+
+export type ThemeLook = {
+  stops: ThemeStop[];
+  intensity: number;
+  grain: number;
+  texture: ThemeTexture;
+  translucency: number;
+};
+
+export type ProfileTheme = ThemeLook & {
+  mode: ThemeMode;
+  dark?: ThemeLook;
+};
+
 export type Profile = {
   id: string;
   name: string;
@@ -10,6 +31,7 @@ export type Profile = {
   icon: string | null;
   createdAt: number;
   dataId?: string;
+  theme?: ProfileTheme | null;
 };
 
 export type BrowserWindow = {
@@ -48,6 +70,7 @@ export type Tab = {
   liveItem?: { folderId: string; itemId: string };
   unloaded?: boolean;
   pinKey?: string;
+  pageIn?: string;
   createdAt: number;
   lastActiveAt: number;
 };
@@ -161,6 +184,8 @@ export type FindState = {
   replace?: boolean;
 };
 
-export type PanelState = { open: boolean; initialText: string };
+export type NewTabTarget = { kind: "list" } | { kind: "group"; groupId: string } | { kind: "into"; tabId: string };
+
+export type PanelState = { open: boolean; initialText: string; newTab?: NewTabTarget };
 
 export type WindowUi = { panel: PanelState; downloadsOpen: boolean };

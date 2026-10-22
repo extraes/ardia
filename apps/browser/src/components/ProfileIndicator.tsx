@@ -1,7 +1,7 @@
 import { Symbol, showMenu, type MenuItem } from "@ardia/shell";
 import { Pressable, Text, View } from "react-native";
 import { createProfile, switchProfile } from "../lib/actions";
-import { PROFILE_COLORS, profileNameColor, useTheme } from "../lib/theme";
+import { profileAccent, profileNameColor, useTheme } from "../lib/theme";
 import { useBrowser } from "../store/browser";
 import { useIsIncognito, useProfiles, useWindowId, useWindowProfile } from "../store/hooks";
 import { setMeasuredWidth, useMeasuredWidth } from "./layout/measuredWidths";
@@ -25,7 +25,7 @@ function useIndicator(room: number) {
   const nameRoom = room - 2 * PAD;
   const showName = !!textWidth && (textWidth <= nameRoom || nameRoom >= MIN_CUT_NAME);
   const width = !shown ? 0 : showName ? Math.min(room, textWidth + 2 * PAD) : ICON_WIDTH;
-  const color = incognito ? theme.textPrimary : profileNameColor(profile.color, theme.dark);
+  const color = incognito ? theme.textPrimary : profileNameColor(profile, theme.dark);
   return { incognito, title, textWidth, shown, showName, width, color };
 }
 
@@ -85,7 +85,7 @@ export async function openProfileMenu(windowId: string) {
       id: `switch:${id}`,
       title: s.profiles[id]!.name,
       checked: id === current,
-      swatch: PROFILE_COLORS[s.profiles[id]!.color]?.swatch,
+      swatch: profileAccent(s.profiles[id]),
       ...(i < 9 ? { key: String(i + 1), modifiers: ["control" as const] } : {}),
     })),
     { separator: true },

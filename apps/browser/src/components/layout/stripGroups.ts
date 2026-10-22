@@ -1,5 +1,6 @@
 import type { BrowserState } from "../../store/browser";
 import { viewTabIds } from "../../store/model";
+import { hiddenEmptyCard } from "../../store/newTabBar";
 import { groupIndex, splitIndex, stableList } from "../../store/structure";
 import { springParams } from "./swipeMotion";
 
@@ -122,7 +123,7 @@ const stripMemo = new Map<string, { inputs: unknown[]; result: string[] }>();
 
 export function stripEntries(s: BrowserState, windowId: string, profileId: string): string[] {
   const key = `${windowId}|${profileId}`;
-  const inputs = [s.tabs, s.windows, s.groups, s.splits];
+  const inputs = [s.tabs, s.windows, s.groups, s.splits, s.settings.newTabOpens];
   const cached = stripMemo.get(key);
   if (cached && cached.inputs.every((v, i) => v === inputs[i])) return cached.result;
   const groups = groupIndex(s.groups);
@@ -131,6 +132,7 @@ export function stripEntries(s: BrowserState, windowId: string, profileId: strin
   const out: string[] = [];
   for (const id of viewTabIds(s, windowId, profileId)) {
     const t = s.tabs[id]!;
+    if (hiddenEmptyCard(s, t)) continue;
     if (t.pinned) {
       out.push(`pinned:${id}`);
       continue;

@@ -27,7 +27,7 @@ import { useMedia, usePictureInPicture } from "../media/state";
 import { openSettings } from "../settings/windows";
 import { copyPageUrl } from "./selection";
 import { canShare, shareTab } from "./share";
-import { ActionTile, FooterChip, MoreButton, SectionTitle, SettingRow, SITE_PANEL } from "./SiteControlsParts";
+import { ActionTile, FooterChip, gridColumns, MoreButton, SectionTitle, SettingRow, SITE_PANEL, TileRow } from "./SiteControlsParts";
 import { SiteExtensions } from "./SiteExtensions";
 import { TranslateRows } from "./TranslateControls";
 import { ZoomStepper } from "./ZoomControls";
@@ -177,10 +177,9 @@ function SiteControlsPanel({
   const findable = /^(https?|file):/i.test(url);
   const castTile = !video && !!origin;
   const tiles = [
-    canShare(tab) ? <ActionTile key="share" ref={shareTile} stretch icon="square.and.arrow.up" label="Share…" onPress={share} /> : null,
+    canShare(tab) ? <ActionTile key="share" ref={shareTile} icon="square.and.arrow.up" label="Share…" onPress={share} /> : null,
     <ActionTile
       key="copy"
-      stretch
       icon="link"
       label="Copy Clean Link"
       onPress={() => {
@@ -191,7 +190,6 @@ function SiteControlsPanel({
     findable ? (
       <ActionTile
         key="find"
-        stretch
         icon="text.magnifyingglass"
         label="Find on Page"
         onPress={() => {
@@ -203,7 +201,6 @@ function SiteControlsPanel({
     video ? (
       <ActionTile
         key="pip"
-        stretch
         icon={pip ? "pip.exit" : "pip.enter"}
         label={pip ? "Exit Picture in Picture" : "Picture in Picture"}
         active={pip}
@@ -213,7 +210,7 @@ function SiteControlsPanel({
         }}
       />
     ) : castTile ? (
-      <ActionTile key="cast" stretch icon="tv.and.mediabox" label="Cast…" onPress={cast} />
+      <ActionTile key="cast" icon="tv.and.mediabox" label="Cast…" onPress={cast} />
     ) : null,
   ].filter(Boolean);
 
@@ -233,9 +230,9 @@ function SiteControlsPanel({
   return (
     <Popover width={SITE_PANEL.width} top={top} right={right} left={left} onDismiss={close} fitHeight closing={closing} onClosed={onClosed}>
       <View style={{ paddingTop: PANEL.inset }}>
-        <View style={{ flexDirection: "row", gap: SITE_PANEL.gap, paddingHorizontal: PANEL.inset }}>{tiles}</View>
+        <TileRow>{tiles}</TileRow>
 
-        <SiteExtensions windowId={tab.windowId} onClose={close} />
+        <SiteExtensions windowId={tab.windowId} columns={gridColumns(tiles.length)} onClose={close} />
 
         {origin ? (
           <>

@@ -41,8 +41,35 @@ public final class AppUpdater: NSObject {
     return "\(version[..<range.lowerBound]) Nightly \(number)"
   }
 
+  static let aboutNotice = "© 2026 Mantra Patel. Ardia is open source under the Apache License 2.0. It's built on Chromium, ungoogled-chromium and uBlock Origin, each under its own license."
+
   @objc public func showAbout(_ sender: Any?) {
-    NSApp.orderFrontStandardAboutPanel(options: [.applicationVersion: Self.displayVersion])
+    NSApp.orderFrontStandardAboutPanel(options: [.applicationVersion: Self.displayVersion, .credits: Self.aboutCredits])
+  }
+
+  private static var aboutCredits: NSAttributedString {
+    let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? ""
+    let repository = "https://github.com/mantrakp04/ardia"
+    let centered = NSMutableParagraphStyle()
+    centered.alignment = .center
+    let plain: [NSAttributedString.Key: Any] = [
+      .font: NSFont.systemFont(ofSize: NSFont.smallSystemFontSize),
+      .foregroundColor: NSColor.secondaryLabelColor,
+      .paragraphStyle: centered,
+    ]
+    let links = [
+      ("Source code", "\(repository)/tree/v\(version)"),
+      ("License", "\(repository)/blob/v\(version)/LICENSE"),
+      ("Credits", "\(repository)/blob/v\(version)/NOTICE"),
+    ]
+    let credits = NSMutableAttributedString(string: "\(aboutNotice)\n\n", attributes: plain)
+    for (index, (title, url)) in links.enumerated() {
+      if index > 0 { credits.append(NSAttributedString(string: "  ·  ", attributes: plain)) }
+      var linked = plain
+      linked[.link] = URL(string: url)
+      credits.append(NSAttributedString(string: title, attributes: linked))
+    }
+    return credits
   }
 
   private static var isOff: Bool {

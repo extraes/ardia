@@ -19,15 +19,18 @@ export function Switch({
   disabled,
   look,
   hitSlop = 6,
+  animateExternalChanges = true,
 }: {
   value: boolean;
   onChange: (value: boolean) => void;
   disabled?: boolean;
   look: SwitchLook;
   hitSlop?: number;
+  animateExternalChanges?: boolean;
 }) {
   const progress = useRef(new Animated.Value(value ? 1 : 0)).current;
   const target = useRef(value);
+  const pressedAt = useRef(0);
 
   const slideTo = (on: boolean) => {
     if (target.current === on) return;
@@ -35,7 +38,14 @@ export function Switch({
     Animated.timing(progress, { toValue: on ? 1 : 0, duration: look.duration, easing: look.easing, useNativeDriver: true }).start();
   };
 
-  useEffect(() => slideTo(value));
+  const jumpTo = (on: boolean) => {
+    if (target.current === on) return;
+    target.current = on;
+    progress.stopAnimation();
+    progress.setValue(on ? 1 : 0);
+  };
+
+  useEffect(() => (animateExternalChanges || Date.now() - pressedAt.current < USER_CHANGE_WINDOW_MS ? slideTo(value) : jumpTo(value)));
 
   const travel = look.width - look.knob - look.inset * 2;
   const radius = look.height / 2;
@@ -45,6 +55,7 @@ export function Switch({
       hitSlop={hitSlop}
       onPress={() => {
         const next = !target.current;
+        pressedAt.current = Date.now();
         slideTo(next);
         onChange(next);
       }}
@@ -70,5 +81,7 @@ export function Switch({
     </Pressable>
   );
 }
+
+const USER_CHANGE_WINDOW_MS = 2000;
 
 export const switchEasing = { cubicOut: Easing.out(Easing.cubic), quadOut: Easing.out(Easing.quad) };

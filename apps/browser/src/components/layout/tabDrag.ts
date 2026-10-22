@@ -219,3 +219,28 @@ export function cancelTabDrag() {
   begun = false;
   sentShape = "hidden";
 }
+
+const EXTERNAL_DRAG = "external";
+let externalOwner: { windowId: string; token: number } | null = null;
+const ownsExternal = (windowId: string, token: number) =>
+  useTabDrag.getState().windowId === EXTERNAL_DRAG && externalOwner?.windowId === windowId && externalOwner.token === token;
+
+export function beginExternalDrag(windowId: string, point: [number, number], token: number) {
+  const drag = useTabDrag.getState();
+  if (drag.tabIds.length && drag.windowId !== EXTERNAL_DRAG) return;
+  externalOwner = { windowId, token };
+  useTabDrag.setState({ ...IDLE, tabIds: [EXTERNAL_DRAG], windowId: EXTERNAL_DRAG, overWindow: windowId, overPoint: point, x: -1, y: -1 });
+}
+
+export function moveExternalDrag(windowId: string, point: [number, number], token: number) {
+  if (ownsExternal(windowId, token)) useTabDrag.setState({ overPoint: point });
+}
+
+export function endExternalDrag(windowId: string, point: [number, number] | null, token: number): string | null | undefined {
+  if (!ownsExternal(windowId, token)) return undefined;
+  const resolve = point ? insertResolvers.get(windowId) : undefined;
+  const beforeId = resolve && point ? resolve(point) : undefined;
+  externalOwner = null;
+  useTabDrag.setState({ ...IDLE, tabIds: [] });
+  return beforeId;
+}

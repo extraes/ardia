@@ -11,10 +11,10 @@ export function ShareDiagnosticsSection() {
     <>
       <SectionHeader title="Crash reports and usage" />
       <Group>
-        <Row title={SHARING_COPY.toggle} description={SHARING_COPY.summary}>
+        <Row anchor="privacy.shareDiagnostics" title={SHARING_COPY.toggle} description={SHARING_COPY.summary}>
           <Toggle value={sharing} onChange={(on) => setSharing(on, "settings")} />
         </Row>
-        <Row title={SHARING_COPY.whatsSent} description="Every field, and what never leaves this Mac." onPress={() => showSettingsSheet(<WhatsSentSheet />)} />
+        <Row anchor="privacy.whatsSent" title={SHARING_COPY.whatsSent} onPress={() => showSettingsSheet(<WhatsSentSheet />)} />
       </Group>
     </>
   );

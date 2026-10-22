@@ -1,5 +1,5 @@
 import { ContextMenuArea, Symbol } from "@ardia/shell";
-import { forwardRef, type ReactNode } from "react";
+import { Children, forwardRef, type ReactNode } from "react";
 import { Image, Pressable, Text, View } from "react-native";
 import { useTheme, type Theme } from "../../lib/theme";
 import { PANEL } from "../layout/controls";
@@ -7,7 +7,6 @@ import { useHover } from "../primitives";
 
 export const SITE_PANEL = {
   width: 288,
-  columns: 4,
   gap: 8,
   actionHeight: 40,
   extensionHeight: 36,
@@ -18,8 +17,6 @@ export const SITE_PANEL = {
   settingBadge: 26,
   footerControl: 26,
 } as const;
-
-export const tileWidth = (SITE_PANEL.width - 2 * PANEL.inset - (SITE_PANEL.columns - 1) * SITE_PANEL.gap) / SITE_PANEL.columns;
 
 export function tileFill(theme: Theme, pressed: boolean, hovered: boolean) {
   const alpha = pressed ? 0.16 : hovered ? 0.11 : 0.07;
@@ -47,18 +44,39 @@ export function SectionTitle({ title, tight }: { title: string; tight?: boolean 
   );
 }
 
-export function TileGrid({ children }: { children: ReactNode }) {
-  return <View style={{ flexDirection: "row", flexWrap: "wrap", gap: SITE_PANEL.gap, paddingHorizontal: PANEL.inset }}>{children}</View>;
+export function gridColumns(actionCount: number) {
+  return actionCount === 3 ? 3 : 4;
 }
 
-export const ActionTile = forwardRef<View, { icon: string; label: string; active?: boolean; stretch?: boolean; onPress: () => void }>(function ActionTile(
-  { icon, label, active, stretch, onPress },
+export function TileGrid({ columns, children }: { columns: number; children: ReactNode }) {
+  const cells = Children.toArray(children);
+  const rows = Array.from({ length: Math.ceil(cells.length / columns) }, (_, row) => cells.slice(row * columns, row * columns + columns));
+  return (
+    <View style={{ gap: SITE_PANEL.gap, paddingHorizontal: PANEL.inset }}>
+      {rows.map((row, index) => (
+        <View key={index} style={{ flexDirection: "row", gap: SITE_PANEL.gap }}>
+          {row}
+          {Array.from({ length: columns - row.length }, (_, spacer) => (
+            <View key={`spacer${spacer}`} style={{ flex: 1 }} />
+          ))}
+        </View>
+      ))}
+    </View>
+  );
+}
+
+export function TileRow({ children }: { children: ReactNode }) {
+  return <View style={{ flexDirection: "row", gap: SITE_PANEL.gap, paddingHorizontal: PANEL.inset }}>{children}</View>;
+}
+
+export const ActionTile = forwardRef<View, { icon: string; label: string; active?: boolean; onPress: () => void }>(function ActionTile(
+  { icon, label, active, onPress },
   ref,
 ) {
   const theme = useTheme();
   const { hovered, hoverProps } = useHover();
   return (
-    <View ref={ref} collapsable={false} tooltip={label} accessibilityLabel={label} style={stretch ? { flex: 1 } : { width: tileWidth }} {...hoverProps}>
+    <View ref={ref} collapsable={false} tooltip={label} accessibilityLabel={label} style={{ flex: 1 }} {...hoverProps}>
       <Pressable onPress={onPress} accessibilityRole="button" accessibilityLabel={label}>
         {({ pressed }) => (
           <View
@@ -110,7 +128,7 @@ export const ExtensionTile = forwardRef<
     </Pressable>
   );
   return (
-    <View ref={ref} collapsable={false} tooltip={name} style={{ width: tileWidth }} {...hoverProps}>
+    <View ref={ref} collapsable={false} tooltip={name} style={{ flex: 1 }} {...hoverProps}>
       {onContextMenu ? <ContextMenuArea onContextMenu={onContextMenu}>{button}</ContextMenuArea> : button}
     </View>
   );

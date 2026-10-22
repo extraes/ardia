@@ -7,6 +7,6 @@ extension CefModule {
     "ac_omnibox_opened",
     "ac_task_manager_open", "ac_battery_saver", "ac_memory_trim",
     "ac_cli_control",
-    "ac_extensions_watch_actions",
+    "ac_extensions_watch_actions", "ac_extensions_sync_state", "ac_extensions_sync_apply",
   ]
 }

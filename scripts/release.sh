@@ -192,6 +192,11 @@ cli_tarball="$dist/ardia-cli-$version-macos-arm64.tar.gz"
   || { tail -20 "$dist/cli-build.log" >&2; die "building the ardia CLI failed ($dist/cli-build.log)"; }
 awk '{ print $1 }' "$cli_tarball.sha256" >"$app/Contents/Resources/ardia-cli.sha256"
 
+echo "==> Licenses"
+licenses="$app/Contents/Resources/Licenses"
+mkdir -p "$licenses"
+cp "$root"/LICENSE* "$root/NOTICE" "$licenses/"
+
 echo "==> Sign Chrome's framework"
 entitlements_dir="$ardiacore/scripts/signing"
 sign() {
@@ -244,6 +249,9 @@ done
 [ -d "$app/Contents/PlugIns/ArdiaDockTile.plugin" ] || die "no dock tile plug-in"
 [ -f "$app/Contents/embedded.provisionprofile" ] || die "no Developer ID provisioning profile (keychain groups need it)"
 [ -f "$app/Contents/Resources/Extensions/ublock/manifest.json" ] || die "no uBlock Origin in the app"
+for file in "$root"/LICENSE* "$root/NOTICE"; do
+  cmp -s "$file" "$app/Contents/Resources/Licenses/$(basename "$file")" || die "the app lacks $(basename "$file") in Contents/Resources/Licenses"
+done
 designated="$(codesign -d -r- "$app" 2>&1 | sed -n 's/^designated => //p')"
 [[ "$designated" == *'identifier "com.ardia.browser"'* && "$designated" == *"subject.OU] = U5L5T3NGVV"* ]] \
   || die "designated requirement: $designated"
@@ -265,12 +273,17 @@ done < <(find "$app" \( -name "*.app" -o -name "*.framework" -o -name "*.dylib" 
 
 engine_tree="$(git -C "$root" rev-parse HEAD:engine)"
 engine_archive="$dist/ArdiaCore-${engine_tree:0:12}.tar.xz"
+engine_source="$dist/ArdiaCore-${engine_tree:0:12}-source.tar.xz"
+engine_release="$(awk -v t="$engine_tree" '$1 == t { print $2; exit }' "$ardiacore/prebuilt-engines.tsv")"
+helium_engine=""
+LC_ALL=C grep -q -a -F helium.services.enabled "$framework_src/Versions/Current/Chromium Framework" && helium_engine=1
 engine_pack=""
-if [ "$rc" = 0 ] && [ -z "${ARDIACORE_FRAMEWORK:-}" ] \
-  && ! awk -v t="$engine_tree" '$1 == t { found = 1 } END { exit !found }' "$ardiacore/prebuilt-engines.tsv"; then
+if [ "$rc" = 0 ] && [ -z "${ARDIACORE_FRAMEWORK:-}" ] && [ -z "$engine_release" ]; then
+  engine_release="$version"
   echo "==> Pack the engine (background)"
   (
     set -e
+    [ -z "$helium_engine" ] || "$root/scripts/engine-source.sh" "$version" "$engine_source"
     if command -v xz >/dev/null; then
       tar --no-mac-metadata -cf - -C "$unpruned_engine" "Chromium Framework.framework" | xz -T0 -9 >"$engine_archive"
     else
@@ -284,6 +297,8 @@ if [ "$rc" = 0 ] && [ -z "${ARDIACORE_FRAMEWORK:-}" ] \
 else
   rm -rf "$unpruned_engine"
 fi
+[ -z "$helium_engine" ] || [ "$rc" = 1 ] || [ -n "$engine_release" ] \
+  || die "no published release carries this engine ($engine_tree) and its source: build it from the Chromium tree, without ARDIACORE_FRAMEWORK"
 
 echo "==> Launch check"
 check_data="$(mktemp -d "${TMPDIR:-/tmp}/ac-release.XXXXXX")"
@@ -367,6 +382,8 @@ if [ "$notarize" = 1 ]; then
 else
   install_line="Apple Silicon, macOS 14 or later. Signed with Developer ID but not notarized: on first launch macOS refuses to open it. Click Done, then System Settings › Privacy & Security › Open Anyway. Or run \`xattr -dr com.apple.quarantine /Applications/Ardia.app\`."
 fi
+source_line="This build's source, with the engine's patches and build scripts: https://github.com/$repo/tree/v$version (LICENSE and NOTICE there cover the licenses)."
+[ -n "$helium_engine" ] && [ -n "$engine_release" ] && source_line="$source_line The engine's Helium and uBlock sources as built, and where Chromium's is: https://github.com/$repo/releases/download/v$engine_release/$(basename "$engine_source")"
 {
   notes_body
   cat <<EOF
@@ -376,6 +393,10 @@ fi
 $install_line
 
 $updates_line
+
+## Source
+
+$source_line
 EOF
 } > "$dist/release-notes.md"
 
@@ -403,11 +424,12 @@ if [ -n "$engine_pack" ]; then
   wait "$engine_pack" || { cat "$dist/engine-pack.log" >&2; die "packing the engine failed ($dist/engine-pack.log)"; }
   rm -f "$dist/engine-pack.log"
   engine_files=("$engine_archive" "$dist/prebuilt-engine.tsv")
+  [ -z "$helium_engine" ] || engine_files+=("$engine_source")
 fi
 
 echo
 [ "$notarize" = 1 ] && echo "Notarized and stapled." || echo "NOT notarized."
-[ -n "$engine_pack" ] && echo "New engine: publish $(basename "$engine_archive") with the release, then add prebuilt-engine.tsv's line to packages/ardiacore/prebuilt-engines.tsv."
+[ -n "$engine_pack" ] && echo "New engine: publish $(basename "$engine_archive")${helium_engine:+ and $(basename "$engine_source")} with the release, then add prebuilt-engine.tsv's line to packages/ardiacore/prebuilt-engines.tsv."
 [ "$rc" = 1 ] && echo "Release candidate: never publish dist/$version-rc."
 [ "$channel" = nightly ] && [ "$rc" = 0 ] && echo "Nightly: publish it with .claude/skills/release/scripts/publish-nightly.sh $version (a prerelease; the feed and ardia.dev/nightly follow)."
 [ -n "$phased" ] && echo "Phased rollout: $phased s between steps (the appcast item has phasedRolloutInterval; the whole release takes $((phased * 7)) s)."
