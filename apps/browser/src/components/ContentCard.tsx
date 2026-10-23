@@ -84,9 +84,10 @@ export function ContentCard() {
   useEffect(startMedia, []);
   useEffect(startSelectionTools, []);
   useEffect(startPeeks, []);
+  const peekId = useBrowser((s) => s.peeks[windowId]?.tabId);
   useEffect(() => {
-    if (fullscreenTab) dismissPeek(windowId);
-  }, [fullscreenTab, windowId]);
+    if (fullscreenTab && peekId) dismissPeek(windowId);
+  }, [fullscreenTab, peekId, windowId]);
 
   const mountedMemo = useRef<{ tabIds?: string[]; tabs?: object; ids: string[]; seen: (Tab | undefined)[]; wants: boolean[] }>({ ids: [], seen: [], wants: [] });
   const mounted = useBrowser(
