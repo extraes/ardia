@@ -435,6 +435,38 @@ try {
     assert.ok(Math.abs(out.landed.x - out.row.x) < 0.5 && Math.abs(out.landed.y - out.row.y) < 0.5, JSON.stringify(out));
   });
 
+  await check("sidebar auto-hidden: a row dragged within the peeking sidebar reorders instead of splitting, and Esc cancels a drag", async () => {
+    const edge = (p) => run(`return ac.shell.devLeftEdgePointer("w1", ${JSON.stringify(p)}).then(() => settle(500)).then(() => !!globalThis.acLayout.peek.w1?.live);`);
+    await run(`for (const v of Object.values(st().splits)) st().separateSplit(v.id); if (st().windows.w1.sidebarOpen) st().toggleSidebar("w1"); return settle(900);`);
+    try {
+      await edge({ x: -4, y: 300 });
+      assert.equal(await edge({ x: 120, y: 300 }), true, "the sidebar peeks");
+      const rows = (await run(`return Promise.all([...globalThis.sidebarDrag.items.values()].filter((i) => i.kind === "row" && !i.parentGroup && i.section === "list" && i.view).map((i) => new Promise((r) => i.view.measureInWindow((x, y, w, h) => r({ id: i.tabIds[0], x, y, w, h })))));`))
+        .filter((r) => r.x > 0).sort((a, b) => a.y - b.y);
+      assert.ok(rows.length >= 3, JSON.stringify(rows));
+      const [a, , c] = rows;
+      const sx = Math.round(a.x + a.w / 2), sy = Math.round(a.y + a.h / 2), to = Math.round(c.y + c.h * 0.85);
+      const before = await order("w1");
+      const seen = await run(`const seen = []; const iv = setInterval(() => { const d = globalThis.acTabDrag.getState(); if (d.tabIds.length) seen.push([d.onPage, d.target]); }, 40);
+        return act("w1", "drag:${sx},${sy};${sx},${sy + 10};${sx},${to};${sx},${to}").then(() => settle(1600)).then(() => { clearInterval(iv); return seen; });`);
+      assert.deepEqual(await run(`return Object.values(st().splits).map((v) => v.tabIds);`), [], "no split");
+      assert.ok(seen.every(([onPage, target]) => !onPage && !target), `no page target under the sidebar: ${JSON.stringify(seen.slice(-3))}`);
+      const after = await order("w1");
+      assert.ok(after.indexOf(a.id) > after.indexOf(c.id), `${a.id} moved below ${c.id}: ${before} -> ${after}`);
+      assert.equal(await run(`return !!globalThis.acLayout.peek.w1?.live;`), true, "the sidebar stayed out");
+      const hold = Array.from({ length: 6 }, () => `${sx},${to}`).join(";");
+      const cancelled = await run(`setTimeout(() => ac.shell.devTypeKeys("key", "\\u001b", 0), ${150 + 16 * 12 * 2 + 200});
+        let ended = null; const t0 = performance.now();
+        const stop = globalThis.acTabDrag.subscribe((d, was) => { if (was.tabIds.length && !d.tabIds.length && ended === null) ended = performance.now() - t0; });
+        return act("w1", "drag:${sx},${sy};${sx},${sy + 10};${sx},${to};${hold}").then(() => settle(${150 + 16 * 12 * 8 + 600})).then(() => { stop(); return { ended, order: st().windows.w1.tabIds }; });`);
+      assert.deepEqual(cancelled.order, after, "Esc: nothing moved");
+      assert.ok(cancelled.ended !== null && cancelled.ended < 150 + 16 * 12 * 7, `Esc ended the drag before the release: ${cancelled.ended}`);
+      assert.equal(await edge({ x: 800, y: 400 }), false, "it hides once the pointer leaves");
+    } finally {
+      await run(`return ac.shell.devLeftEdgePointer("w1", null).then(() => { if (!st().windows.w1.sidebarOpen) st().toggleSidebar("w1"); return settle(900); });`);
+    }
+  });
+
   await check("sidebar: the empty room under the rows moves the window, and a double-click there still opens a tab", async () => {
     const x = 120, y = (await run(`return st().windows.w1.frame[3];`)) - 140;
     const result = await run(`

@@ -1,4 +1,3 @@
-diff --git a/chrome/browser/performance_manager/public/user_tuning/battery_saver_mode_manager.h b/chrome/browser/performance_manager/public/user_tuning/battery_saver_mode_manager.h
 --- a/chrome/browser/performance_manager/public/user_tuning/battery_saver_mode_manager.h
 +++ b/chrome/browser/performance_manager/public/user_tuning/battery_saver_mode_manager.h
 @@ -43,6 +43,8 @@
@@ -20,29 +19,30 @@ diff --git a/chrome/browser/performance_manager/public/user_tuning/battery_saver
    // Returns true if the device is unplugged and using battery power.
    bool IsUsingBatteryPower() const;
  
-diff --git a/chrome/browser/performance_manager/user_tuning/battery_saver_mode_manager.cc b/chrome/browser/performance_manager/user_tuning/battery_saver_mode_manager.cc
 --- a/chrome/browser/performance_manager/user_tuning/battery_saver_mode_manager.cc
 +++ b/chrome/browser/performance_manager/user_tuning/battery_saver_mode_manager.cc
-@@ -21,6 +21,7 @@
- #include "base/process/process.h"
+@@ -22,6 +22,7 @@
  #include "base/run_loop.h"
  #include "base/scoped_multi_source_observation.h"
+ #include "base/strings/string_number_conversions.h"
 +#include "base/timer/timer.h"
  #include "base/values.h"
  #include "components/performance_manager/freezing/freezing_policy.h"
  #include "components/performance_manager/performance_manager_impl.h"
-@@ -74,14 +75,59 @@
+@@ -88,17 +89,66 @@
            FrameThrottlingDelegate {
   public:
    void StartThrottlingAllFrameSinks() override {
--    content::StartThrottlingAllFrameSinks(base::Hertz(30));
+-    static int max_rate = GetMaxRate();
+-    if (max_rate < 9000) {
+-      content::StartThrottlingAllFrameSinks(base::Hertz(max_rate));
 +    throttling_wanted_ = true;
 +    if (input_in_progress_) {
 +      HoldFullFrameRateForInput();
 +      return;
-+    }
+     }
 +    if (!held_for_input_) {
-+      content::StartThrottlingAllFrameSinks(base::Hertz(30));
++      StartThrottlingAtMaxRate();
 +    }
    }
  
@@ -75,13 +75,20 @@ diff --git a/chrome/browser/performance_manager/user_tuning/battery_saver_mode_m
    ~FrameThrottlingDelegateImpl() override = default;
 +
 + private:
++  static void StartThrottlingAtMaxRate() {
++    static int max_rate = GetMaxRate();
++    if (max_rate < 9000) {
++      content::StartThrottlingAllFrameSinks(base::Hertz(max_rate));
++    }
++  }
++
 +  void ResumeThrottling() {
 +    if (input_in_progress_) {
 +      return;
 +    }
 +    held_for_input_ = false;
 +    if (throttling_wanted_) {
-+      content::StartThrottlingAllFrameSinks(base::Hertz(30));
++      StartThrottlingAtMaxRate();
 +    }
 +  }
 +
@@ -92,7 +99,7 @@ diff --git a/chrome/browser/performance_manager/user_tuning/battery_saver_mode_m
  };
  
  class ChildProcessTuningDelegateImpl
-@@ -542,6 +588,15 @@
+@@ -559,6 +609,15 @@
           battery_saver_provider_->IsBatterySaverActive();
  }
  

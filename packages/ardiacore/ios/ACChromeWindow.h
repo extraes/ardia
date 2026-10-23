@@ -14,8 +14,6 @@ NS_ASSUME_NONNULL_BEGIN
 + (void)forgetLaunchPictures;
 + (BOOL)takeDismissedAppWindow:(NSString *)appWindow;
 
-+ (nullable NSWindow *)makePopupWindowForProfile:(NSString *)profile root:(NSView *)root;
-
 + (void)embedRootView:(NSView *)root inWindow:(NSWindow *)window;
 
 + (nullable NSView *)rootViewOfWindow:(NSWindow *)window;
@@ -32,6 +30,7 @@ NS_ASSUME_NONNULL_BEGIN
 @property(class, nonatomic, copy, nullable) void (^swappedHandler)(NSWindow *from, NSWindow *to);
 
 @property(class, nonatomic, copy, nullable) BOOL (^shouldCloseHandler)(NSWindow *window);
+@property(class, nonatomic, copy, nullable) BOOL (^refusesUnhandledKeyHandler)(NSWindow *window, NSEvent *event);
 + (BOOL)windowShouldClose:(NSWindow *)window;
 
 @end

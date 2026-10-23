@@ -1,4 +1,5 @@
 import AppKit
+import Carbon.HIToolbox
 import ExpoModulesCore
 
 public enum OpenURLInbox {
@@ -8,6 +9,102 @@ public enum OpenURLInbox {
   public static func receive(_ urls: [URL]) {
     let strings = urls.map { $0.isFileURL ? $0.absoluteString : $0.absoluteString }
     if let deliver { deliver(strings) } else { pending += strings }
+  }
+}
+
+final class BangListFetch: NSObject, URLSessionDataDelegate {
+  static let maxBytes = 5_000_000
+  private static let listURL = URL(string: "https://services.helium.imput.net/bangs.json")!
+  private static var running: Set<BangListFetch> = []
+  private static let lock = NSLock()
+
+  private var body = Data()
+  private var response: HTTPURLResponse?
+  private var failure: String?
+  private let done: (Result<[String: Any], Error>) -> Void
+
+  private init(done: @escaping (Result<[String: Any], Error>) -> Void) {
+    self.done = done
+  }
+
+  private static var url: URL {
+    #if DEBUG
+    if let override = ProcessInfo.processInfo.environment["ARDIA_BANGS_URL"], let url = URL(string: override) { return url }
+    #endif
+    return listURL
+  }
+
+  static func start(etag: String?, done: @escaping (Result<[String: Any], Error>) -> Void) {
+    let config = URLSessionConfiguration.ephemeral
+    config.httpCookieStorage = nil
+    config.httpShouldSetCookies = false
+    config.httpCookieAcceptPolicy = .never
+    config.urlCredentialStorage = nil
+    config.urlCache = nil
+    config.requestCachePolicy = .reloadIgnoringLocalCacheData
+    config.timeoutIntervalForRequest = 30
+    config.timeoutIntervalForResource = 60
+    var request = URLRequest(url: url)
+    request.httpMethod = "GET"
+    request.httpShouldHandleCookies = false
+    request.setValue("application/json", forHTTPHeaderField: "Accept")
+    if let etag, !etag.isEmpty, etag.count <= 200, !etag.contains(where: { $0.isNewline }) {
+      request.setValue(etag, forHTTPHeaderField: "If-None-Match")
+    }
+    let fetch = BangListFetch(done: done)
+    lock.lock()
+    running.insert(fetch)
+    lock.unlock()
+    let session = URLSession(configuration: config, delegate: fetch, delegateQueue: nil)
+    session.dataTask(with: request).resume()
+    session.finishTasksAndInvalidate()
+  }
+
+  func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse, newRequest request: URLRequest, completionHandler: @escaping (URLRequest?) -> Void) {
+    completionHandler(nil)
+  }
+
+  func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive response: URLResponse, completionHandler: @escaping (URLSession.ResponseDisposition) -> Void) {
+    self.response = response as? HTTPURLResponse
+    if response.expectedContentLength > Int64(Self.maxBytes) {
+      failure = "too large"
+      return completionHandler(.cancel)
+    }
+    completionHandler(.allow)
+  }
+
+  func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive data: Data) {
+    guard failure == nil else { return }
+    if body.count + data.count > Self.maxBytes {
+      failure = "too large"
+      body = Data()
+      dataTask.cancel()
+      return
+    }
+    body.append(data)
+  }
+
+  func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
+    defer {
+      Self.lock.lock()
+      Self.running.remove(self)
+      Self.lock.unlock()
+    }
+    if let failure { return done(.failure(NSError(domain: "ArdiaBangs", code: 1, userInfo: [NSLocalizedDescriptionKey: failure]))) }
+    if let error { return done(.failure(error)) }
+    guard let response else { return done(.failure(NSError(domain: "ArdiaBangs", code: 2, userInfo: [NSLocalizedDescriptionKey: "no response"]))) }
+    let text = response.statusCode == 200 ? String(data: body, encoding: .utf8) : nil
+    if response.statusCode == 200 && text == nil {
+      return done(.failure(NSError(domain: "ArdiaBangs", code: 3, userInfo: [NSLocalizedDescriptionKey: "not UTF-8"])))
+    }
+    let orNull = { (value: String?) -> Any in value.map { $0 as Any } ?? NSNull() }
+    done(.success([
+      "status": response.statusCode,
+      "etag": orNull(response.value(forHTTPHeaderField: "ETag")),
+      "contentType": orNull(response.value(forHTTPHeaderField: "Content-Type")),
+      "body": orNull(text),
+      "bytes": body.count,
+    ]))
   }
 }
 
@@ -133,6 +230,7 @@ public class ShellModule: Module {
   private var sidebarObservers: [(NotificationCenter, NSObjectProtocol)] = []
   private var flagsMonitor: Any?
   private var switcherMonitor: Any?
+  private var dragEscapeMonitor: Any?
   private let switcherPointer = SwitcherPointer()
 
   public func definition() -> ModuleDefinition {
@@ -141,14 +239,22 @@ public class ShellModule: Module {
 
     OnCreate {
       _ = installTextFieldSelectAll
+      _ = installInputSourceKeys
       _ = installScrollViewInsetFix
       _ = installOutsidePressMonitor
       DispatchQueue.main.async { [weak self] in
         MenuTarget.shared.handler = { command, arg, windowId in
           if command == "closeTab", WindowManager.shared.closeForeignKeyWindow() { return }
-          self?.sendEvent("onCommand", ["command": command, "arg": arg as Any, "windowId": windowId as Any])
+          self?.sendEvent("onCommand", [
+            "command": command, "arg": arg as Any, "windowId": windowId as Any,
+            "focusGeneration": FocusHandoff.shared.takeBegun() as Any,
+          ])
         }
         WindowManager.shared.emit = { name, body in self?.sendEvent(name, body) }
+        FocusHandoff.shared.install()
+        if let queue = self?.appContext?.reactBridge?.uiManager.methodQueue {
+          FocusHandoff.shared.afterPendingUI = { block in queue.async { DispatchQueue.main.async(execute: block) } }
+        }
         LeftEdgeWatcher.shared.emit = { name, body in self?.sendEvent(name, body) }
         WindowManager.shared.runtime = self.map(ObjectIdentifier.init)
         NSApp.mainMenu = MainMenu.build()
@@ -171,6 +277,8 @@ public class ShellModule: Module {
       self.flagsMonitor = nil
       if let monitor = self.switcherMonitor { NSEvent.removeMonitor(monitor) }
       self.switcherMonitor = nil
+      if let monitor = self.dragEscapeMonitor { NSEvent.removeMonitor(monitor) }
+      self.dragEscapeMonitor = nil
       let gone = ObjectIdentifier(self)
       DispatchQueue.main.async {
         WindowManager.shared.runtimeGone(gone)
@@ -209,9 +317,6 @@ public class ShellModule: Module {
     }.runOnQueue(.main)
 
     AsyncFunction("closeWindow") { (id: String) in WindowManager.shared.close(id: id) }.runOnQueue(.main)
-    AsyncFunction("setWindowProfile") { (id: String, profile: String, neighbours: [String]) in
-      WindowManager.shared.setProfile(id: id, profile: profile, neighbours: neighbours)
-    }.runOnQueue(.main)
     AsyncFunction("setTrafficLightsCenter") { (id: String, center: [Double]?) in
       WindowManager.shared.setTrafficLightsCenter(id: id, center: center.flatMap { $0.count == 2 ? NSPoint(x: $0[0], y: $0[1]) : nil })
     }.runOnQueue(.main)
@@ -266,13 +371,6 @@ public class ShellModule: Module {
       return [:]
       #endif
     }.runOnQueue(.main)
-    AsyncFunction("devDragPreviewWrite") { (dir: String) -> Bool in
-      #if DEBUG
-      return DragPreview.shared.debugWrite(dir: dir)
-      #else
-      return false
-      #endif
-    }.runOnQueue(.main)
     AsyncFunction("dragPreviewEnd") { (windowId: String?, frame: [Double]?) in
       DragPreview.shared.end(windowId: windowId, fallback: frame.flatMap { $0.count == 4 ? NSRect(x: $0[0], y: $0[1], width: $0[2], height: $0[3]) : nil })
     }.runOnQueue(.main)
@@ -280,7 +378,6 @@ public class ShellModule: Module {
       WindowManager.shared.setTitle(id: id, title: title)
     }.runOnQueue(.main)
     AsyncFunction("windowIds") { () -> [String] in Array(WindowManager.shared.windows.keys) }.runOnQueue(.main)
-    AsyncFunction("keyWindowId") { () -> String? in WindowManager.shared.keyWindowId }.runOnQueue(.main)
 
     AsyncFunction("setAppearance") { (mode: String) in
       NSApp.appearance = mode == "light" ? NSAppearance(named: .aqua) : mode == "dark" ? NSAppearance(named: .darkAqua) : nil
@@ -350,11 +447,29 @@ public class ShellModule: Module {
 
     Function("removeDocument") { (name: String) in try DocumentStore.remove(name) }
 
+    AsyncFunction("fetchBangList") { (etag: String?, promise: Promise) in
+      BangListFetch.start(etag: etag) { result in
+        switch result {
+        case .success(let reply): promise.resolve(reply)
+        case .failure(let error): promise.reject("ERR_BANG_LIST", error.localizedDescription)
+        }
+      }
+    }
+
     AsyncFunction("saveDocument") { (name: String, contents: String, promise: Promise) in
       try DocumentStore.write(name, contents) { error in
         if let error { promise.reject("ERR_SAVE_DOCUMENT", error.localizedDescription) } else { promise.resolve(nil) }
       }
     }
+
+    AsyncFunction("cancelFocusMove") { (generation: Int, restoringSource: Bool) in
+      FocusHandoff.shared.cancel(generation, restoringSource: restoringSource)
+    }.runOnQueue(.main)
+
+    AsyncFunction("claimFocus") { [weak self] (generation: Int, tag: Int) in
+      guard let view = self?.appContext?.findView(withTag: tag, ofType: NSView.self) else { return }
+      FocusHandoff.shared.claim(generation, destination: view)
+    }.runOnQueue(.main)
 
     AsyncFunction("setSwitcherCapture") { [weak self] (active: Bool) in
       guard let self else { return }
@@ -375,6 +490,20 @@ public class ShellModule: Module {
         case 123: emit(["type": "switcherKey", "key": "previous"])
         default: break
         }
+        return nil
+      }
+    }.runOnQueue(.main)
+
+    AsyncFunction("setDragEscapeCapture") { [weak self] (active: Bool) in
+      guard let self else { return }
+      if let monitor = self.dragEscapeMonitor { NSEvent.removeMonitor(monitor) }
+      self.dragEscapeMonitor = nil
+      guard active else { return }
+      let emit: ([String: Any]) -> Void = { [weak self] body in self?.sendEvent("onAppEvent", body) }
+      self.dragEscapeMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+        let modifiers = event.modifierFlags.intersection([.command, .option, .control, .shift])
+        guard event.keyCode == 53 || event.charactersIgnoringModifiers == "\u{1b}", modifiers.isEmpty else { return event }
+        emit(["type": "dragEscape"])
         return nil
       }
     }.runOnQueue(.main)
@@ -669,6 +798,345 @@ public class SymbolModule: Module {
   }
 }
 
+enum ServerWindowDrag {
+  private static let regions = NSHashTable<NSView>.weakObjects()
+  private static let opaqueRectSelector = NSSelectorFromString("_opaqueRectForWindowMoveWhenInTitlebar")
+  private static let refreshSelector = NSSelectorFromString("_updateDragRegionForHiddenStateChange")
+  private static let enabled = ["1", "all"].contains(ProcessInfo.processInfo.environment["ARDIA_SERVER_WINDOW_DRAG"] ?? "")
+
+  private static let refreshEvery: CFTimeInterval = 0.1
+  private static var targets: [ObjectIdentifier: (blocking: [ObjectIdentifier: Bool], open: [NSRect])] = [:]
+  private static var refreshedAt: [ObjectIdentifier: CFTimeInterval] = [:]
+  private static let watchers = NSMapTable<NSWindow, PointerWatcher>.weakToStrongObjects()
+
+  private static let lastWindow = NSMapTable<NSView, NSWindow>.weakToWeakObjects()
+
+  static func track(_ region: NSView, bridge: AnyObject? = nil) {
+    guard enabled, capable else { return }
+    if let bridge { observeMounting(bridge) }
+    if let old = lastWindow.object(forKey: region), old !== region.window { refresh(old) }
+    if let window = region.window {
+      regions.add(region)
+      lastWindow.setObject(window, forKey: region)
+      watch(window)
+      refresh(window)
+    } else {
+      regions.remove(region)
+      lastWindow.removeObject(forKey: region)
+    }
+  }
+
+  static func refresh(_ view: NSView) {
+    if let window = view.window { refresh(window) }
+  }
+
+  static func refresh(_ window: NSWindow) {
+    guard enabled, capable, let content = window.contentView else { return }
+    targets[ObjectIdentifier(window)] = nil
+    refreshedAt[ObjectIdentifier(window)] = CACurrentMediaTime()
+    content.perform(refreshSelector)
+  }
+
+  private static func watch(_ window: NSWindow) {
+    guard watchers.object(forKey: window) == nil, let frame = window.contentView?.superview else { return }
+    watchers.setObject(PointerWatcher(frame), forKey: window)
+    let key = ObjectIdentifier(window)
+    var closing: NSObjectProtocol?
+    closing = NotificationCenter.default.addObserver(forName: NSWindow.willCloseNotification, object: window, queue: .main) { _ in
+      targets[key] = nil
+      refreshedAt[key] = nil
+      pending[key]?.cancel()
+      pending[key] = nil
+      if let closing { NotificationCenter.default.removeObserver(closing) }
+    }
+  }
+
+  static func pointerMoved(in window: NSWindow, at point: NSPoint) {
+    guard point.y >= window.frame.height - band(window) else { return }
+    scheduleRefresh(window)
+    let now = CACurrentMediaTime()
+    if let last = refreshedAt[ObjectIdentifier(window)], now - last < refreshEvery { return }
+    refresh(window)
+  }
+
+  private static var pending: [ObjectIdentifier: DispatchWorkItem] = [:]
+
+  static func scheduleRefresh(_ window: NSWindow) {
+    let key = ObjectIdentifier(window)
+    pending[key]?.cancel()
+    let work = DispatchWorkItem { [weak window] in
+      pending[key] = nil
+      if let window { refresh(window) }
+    }
+    pending[key] = work
+    DispatchQueue.main.asyncAfter(deadline: .now() + refreshEvery, execute: work)
+  }
+
+  static func scheduleRefreshAll() {
+    var seen = Set<ObjectIdentifier>()
+    for region in regions.allObjects {
+      guard let window = region.window, seen.insert(ObjectIdentifier(window)).inserted else { continue }
+      scheduleRefresh(window)
+    }
+  }
+
+  private static var mounting: MountWatcher?
+  private static var eventMonitor: Any?
+
+  private static func observeMounting(_ bridge: AnyObject) {
+    guard mounting == nil,
+          let manager = bridge.value(forKey: "uiManager") as AnyObject?,
+          let coordinator = manager.value(forKey: "observerCoordinator") as AnyObject?
+    else { return }
+    let watcher = MountWatcher()
+    let add = NSSelectorFromString("addObserver:")
+    guard coordinator.responds(to: add) else { return }
+    _ = coordinator.perform(add, with: watcher)
+    mounting = watcher
+    eventMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseUp, .rightMouseUp, .otherMouseUp, .keyUp, .flagsChanged]) { event in
+      if let window = event.window { scheduleRefresh(window) }
+      return event
+    }
+  }
+
+  static func band(_ window: NSWindow) -> CGFloat {
+    max(0, window.frame.height - window.contentLayoutRect.height)
+  }
+
+  private static func openRects(_ window: NSWindow) -> [NSRect] {
+    let height = window.frame.height
+    let strip = NSRect(x: 0, y: height - band(window), width: window.frame.width, height: band(window))
+    return regions.allObjects.filter { $0.window === window && !$0.isHiddenOrHasHiddenAncestor }
+      .map { windowRect($0).intersection(strip) }
+      .filter { !$0.isEmpty }
+  }
+
+  private static func topLayer(_ window: NSWindow?) -> CALayer? { window?.contentView?.superview?.layer }
+
+  static func windowRect(_ view: NSView) -> NSRect {
+    if let layer = view.layer, let top = topLayer(view.window) { return layer.convert(layer.bounds, to: top) }
+    return view.convert(view.bounds, to: nil)
+  }
+
+  private static func transformed(_ view: NSView) -> Bool {
+    guard let layer = view.layer else { return false }
+    return !CATransform3DIsIdentity(layer.transform) || !layer.affineTransform().isIdentity
+  }
+
+  private static func zOrdered(_ view: NSView) -> [NSView] {
+    let sorted = NSSelectorFromString("reactZIndexSortedSubviews")
+    if view.responds(to: sorted), let subviews = view.perform(sorted)?.takeUnretainedValue() as? [NSView] { return subviews }
+    return view.subviews
+  }
+
+  private enum Layer { case region, beneath, above, inert }
+
+  private static func classify(_ window: NSWindow) -> (blocking: [ObjectIdentifier: Bool], open: [NSRect]) {
+    let key = ObjectIdentifier(window)
+    if let cached = targets[key] { return cached }
+    let open = openRects(window)
+    var blocking: [ObjectIdentifier: Bool] = [:]
+    let rn: AnyClass? = NSClassFromString("RCTView")
+    func pointerEvents(_ view: NSView) -> Int {
+      guard let rn, view.isKind(of: rn) else { return 0 }
+      return (view.value(forKey: "pointerEvents") as? NSNumber)?.intValue ?? 0
+    }
+    var moving = false
+    func visit(_ view: NSView, _ layer: Layer) {
+      let frame = windowRect(view)
+      guard !moving, !view.isHidden, open.contains(where: { $0.intersects(frame) }) else { return }
+      if transformed(view) {
+        moving = true
+        return
+      }
+      var children = layer
+      switch leadsToRegion(view) ? .region : layer {
+      case .region:
+        blocking[ObjectIdentifier(view)] = false
+        var passed = false
+        for child in zOrdered(view) {
+          if leadsToRegion(child) {
+            passed = true
+            visit(child, .region)
+          } else {
+            visit(child, passed ? .above : .beneath)
+          }
+        }
+        return
+      case .beneath, .inert:
+        blocking[ObjectIdentifier(view)] = false
+      case .above:
+        if pointerEvents(view) == 1 {
+          blocking[ObjectIdentifier(view)] = false
+          children = .inert
+        } else if takesPresses(view, in: frame, open) {
+          blocking[ObjectIdentifier(view)] = view.alphaValue > 0
+          return
+        } else {
+          blocking[ObjectIdentifier(view)] = false
+        }
+      }
+      for child in zOrdered(view) { visit(child, children) }
+    }
+    if let root = embeddedRoot(window), leadsToRegion(root) { visit(root, .region) }
+    if moving {
+      targets[key] = ([:], [])
+      return ([:], [])
+    }
+    targets[key] = (blocking, open)
+    return (blocking, open)
+  }
+
+  private static func takesPresses(_ view: NSView, in frame: NSRect, _ open: [NSRect]) -> Bool {
+    guard let parent = view.superview else { return true }
+    for rect in open {
+      let area = rect.intersection(frame)
+      if area.isEmpty { continue }
+      for i in 0..<5 {
+        for j in 0..<3 {
+          let point = NSPoint(x: area.minX + area.width * (CGFloat(i) + 0.5) / 5, y: area.minY + area.height * (CGFloat(j) + 0.5) / 3)
+          let local = parent.layer.flatMap { layer in topLayer(view.window).map { layer.convert(point, from: $0) } } ?? parent.convert(point, from: nil)
+          if view.hitTest(local) === view { return true }
+        }
+      }
+    }
+    return false
+  }
+
+  static func blocks(_ view: NSView) -> Bool {
+    guard let window = view.window else { return true }
+    return classify(window).blocking[ObjectIdentifier(view)] ?? true
+  }
+
+  static func leadsToRegion(_ view: NSView) -> Bool {
+    regions.allObjects.contains { $0 === view || $0.isDescendant(of: view) }
+  }
+
+  private static let embeddedSelector = NSSelectorFromString("ardiaEmbeddedSubview")
+
+  static func embeddedRoot(_ window: NSWindow?) -> NSView? {
+    guard let content = window?.contentView, content.responds(to: embeddedSelector) else { return nil }
+    return content.perform(embeddedSelector)?.takeUnretainedValue() as? NSView
+  }
+
+  static func hostsRoot(_ view: NSView) -> Bool {
+    embeddedRoot(view.window) != nil && view === view.window?.contentView
+  }
+
+  static func inRoot(_ view: NSView) -> Bool {
+    guard let root = embeddedRoot(view.window) else { return false }
+    return view === root || view.isDescendant(of: root)
+  }
+
+  #if DEBUG
+  static func blockedRects(_ window: NSWindow) -> [[Double]] {
+    typealias Region = @convention(c) (AnyObject, Selector, NSRect) -> OpaquePointer?
+    typealias Enumerate = @convention(c) (OpaquePointer) -> OpaquePointer?
+    typealias Next = @convention(c) (OpaquePointer) -> UnsafePointer<CGRect>?
+    let sel = NSSelectorFromString("_regionForOpaqueViewsBlockingDraggableFrame:")
+    targets[ObjectIdentifier(window)] = nil
+    guard window.responds(to: sel), let frame = window.contentView?.superview,
+          let sky = dlopen("/System/Library/PrivateFrameworks/SkyLight.framework/SkyLight", RTLD_NOW),
+          let enumerate = dlsym(sky, "CGSRegionEnumerator"), let next = dlsym(sky, "CGSNextRect"),
+          let region = unsafeBitCast(window.method(for: sel), to: Region.self)(window, sel, frame.bounds),
+          let rects = unsafeBitCast(enumerate, to: Enumerate.self)(region)
+    else { return [] }
+    var out: [[Double]] = []
+    while let r = unsafeBitCast(next, to: Next.self)(rects) {
+      out.append([r.pointee.minX, frame.bounds.height - r.pointee.maxY, r.pointee.width, r.pointee.height])
+    }
+    return out
+  }
+  #endif
+
+  private typealias OpaqueRect = @convention(c) (AnyObject, Selector) -> NSRect
+
+  private typealias CanMove = @convention(c) (AnyObject, Selector) -> Bool
+  private static let canMoveSelector = #selector(getter: NSView.mouseDownCanMoveWindow)
+
+  private static func matches(_ cls: AnyClass, _ selector: Selector, _ encoding: (String) -> Bool) -> Bool {
+    guard let method = class_getInstanceMethod(cls, selector), let types = method_getTypeEncoding(method) else { return false }
+    return encoding(String(cString: types))
+  }
+
+  private static let capable: Bool = {
+    let noArguments = { (types: String) in types.hasSuffix("@0:8") }
+    guard let host = NSClassFromString("BridgedContentView"), NSClassFromString("RCTView") != nil,
+          host.instancesRespond(to: embeddedSelector),
+          matches(NSView.self, opaqueRectSelector, { $0.hasPrefix("{CGRect=") && noArguments($0) }),
+          matches(host, opaqueRectSelector, { $0.hasPrefix("{CGRect=") && noArguments($0) }),
+          matches(NSView.self, refreshSelector, { $0.hasPrefix("v") && noArguments($0) }),
+          matches(NSView.self, canMoveSelector, { ($0.hasPrefix("B") || $0.hasPrefix("c")) && noArguments($0) })
+    else { return false }
+    install(host)
+    return true
+  }()
+
+  private static func install(_ host: AnyClass) {
+    replaceRect(host) { view, original in hostsRoot(view) ? .zero : original() }
+    replaceCanMove(host) { view, original in hostsRoot(view) ? true : original() }
+    let allOpen = ProcessInfo.processInfo.environment["ARDIA_SERVER_WINDOW_DRAG"] == "all"
+    replaceRect(NSView.self) { view, original in
+      guard inRoot(view) else { return original() }
+      return !allOpen && blocks(view) ? view.bounds : .zero
+    }
+    for name in ["NSView", "RCTUIView", "RCTView"] {
+      guard let cls = NSClassFromString(name) else { continue }
+      replaceCanMove(cls) { view, original in
+        if inRoot(view) { return allOpen || !blocks(view) ? true : original() }
+        return hostsRoot(view) ? true : original()
+      }
+    }
+  }
+
+  private static func replaceRect(_ cls: AnyClass, _ body: @escaping (NSView, () -> NSRect) -> NSRect) {
+    guard let method = class_getInstanceMethod(cls, opaqueRectSelector) else { return }
+    let original = unsafeBitCast(method_getImplementation(method), to: OpaqueRect.self)
+    let block: @convention(block) (NSView) -> NSRect = { view in body(view) { original(view, opaqueRectSelector) } }
+    let imp = imp_implementationWithBlock(block)
+    if !class_addMethod(cls, opaqueRectSelector, imp, method_getTypeEncoding(method)) { method_setImplementation(method, imp) }
+  }
+
+  private static func replaceCanMove(_ cls: AnyClass, _ body: @escaping (NSView, () -> Bool) -> Bool) {
+    guard let method = class_getInstanceMethod(cls, canMoveSelector) else { return }
+    let original = unsafeBitCast(method_getImplementation(method), to: CanMove.self)
+    let block: @convention(block) (NSView) -> Bool = { view in body(view) { original(view, canMoveSelector) } }
+    let imp = imp_implementationWithBlock(block)
+    if !class_addMethod(cls, canMoveSelector, imp, method_getTypeEncoding(method)) { method_setImplementation(method, imp) }
+  }
+}
+
+final class MountWatcher: NSObject {
+  @objc func uiManagerDidPerformMounting(_ manager: AnyObject) {
+    DispatchQueue.main.async { ServerWindowDrag.scheduleRefreshAll() }
+  }
+}
+
+final class PointerWatcher: NSObject {
+  private weak var view: NSView?
+  private var area: NSTrackingArea?
+
+  init(_ view: NSView) {
+    self.view = view
+    super.init()
+    let area = NSTrackingArea(rect: .zero, options: [.mouseMoved, .mouseEnteredAndExited, .activeAlways, .inVisibleRect], owner: self, userInfo: nil)
+    view.addTrackingArea(area)
+    self.area = area
+  }
+
+  deinit {
+    if let area { view?.removeTrackingArea(area) }
+  }
+
+  @objc func mouseMoved(with event: NSEvent) {
+    guard let window = event.window else { return }
+    ServerWindowDrag.pointerMoved(in: window, at: event.locationInWindow)
+  }
+
+  @objc func mouseEntered(with event: NSEvent) { mouseMoved(with: event) }
+  @objc func mouseExited(with event: NSEvent) {}
+}
+
 final class WindowDragRegion: ExpoView {
   let onRegionDoubleClick = EventDispatcher()
   var titleBarDoubleClick = true
@@ -680,8 +1148,19 @@ final class WindowDragRegion: ExpoView {
     set {}
   }
 
+  override func setFrameSize(_ newSize: NSSize) {
+    super.setFrameSize(newSize)
+    ServerWindowDrag.refresh(self)
+  }
+
+  override func setFrameOrigin(_ newOrigin: NSPoint) {
+    super.setFrameOrigin(newOrigin)
+    ServerWindowDrag.refresh(self)
+  }
+
   override func viewDidMoveToWindow() {
     super.viewDidMoveToWindow()
+    ServerWindowDrag.track(self, bridge: appContext?.reactBridge)
     if let monitor { NSEvent.removeMonitor(monitor) }
     monitor = nil
     doubleClickDown = false
@@ -863,6 +1342,26 @@ let installTextFieldSelectAll: Void = {
     if let editor = field.currentEditor() { editor.selectAll(sender) } else { field.selectText(sender) }
   }
   class_addMethod(NSTextField.self, #selector(NSText.selectAll(_:)), imp_implementationWithBlock(block), "v@:@")
+}()
+
+let installInputSourceKeys: Void = {
+  let processKeyBindings = NSSelectorFromString("processInputKeyBindings:")
+  let keyDown = #selector(NSResponder.keyDown(with:))
+  guard NSTextInputContext.responds(to: processKeyBindings), let method = class_getInstanceMethod(NSTextView.self, keyDown) else { return }
+  typealias KeyDown = @convention(c) (NSTextView, Selector, NSEvent) -> Void
+  typealias ProcessKeyBindings = @convention(c) (AnyClass, Selector, NSEvent) -> ObjCBool
+  let original = unsafeBitCast(method_getImplementation(method), to: KeyDown.self)
+  let process = unsafeBitCast(NSTextInputContext.method(for: processKeyBindings), to: ProcessKeyBindings.self)
+  let inputSourceKeys: Set<UInt16> = [UInt16(kVK_JIS_Eisu), UInt16(kVK_JIS_Kana)]
+  let block: @convention(block) (NSTextView, NSEvent) -> Void = { view, event in
+    if inputSourceKeys.contains(event.keyCode) {
+      _ = process(NSTextInputContext.self, processKeyBindings, event)
+    } else {
+      original(view, keyDown, event)
+    }
+  }
+  let imp = imp_implementationWithBlock(block)
+  if !class_addMethod(NSTextView.self, keyDown, imp, method_getTypeEncoding(method)) { method_setImplementation(method, imp) }
 }()
 
 let installScrollViewInsetFix: Void = {

@@ -294,9 +294,9 @@ void main() {
   float hx = terrainHeight(p + vec2(texel.x, 0.0), ignored);
   float hz = terrainHeight(p + vec2(0.0, texel.y), ignored);
   vec2 gradient = vec2(hx - h, hz - h) / texel;
-  float packed = floor(clamp((h - HMIN) / HRANGE, 0.0, 1.0) * 65535.0);
-  float high = floor(packed / 256.0);
-  outHeight = vec4(high / 255.0, (packed - high * 256.0) / 255.0, gradient / (1.0 + abs(gradient)) * 0.5 + 0.5);
+  float packedHeight = floor(clamp((h - HMIN) / HRANGE, 0.0, 1.0) * 65535.0);
+  float high = floor(packedHeight / 256.0);
+  outHeight = vec4(high / 255.0, (packedHeight - high * 256.0) / 255.0, gradient / (1.0 + abs(gradient)) * 0.5 + 0.5);
   outMaterial = vec4(weights, 1.0);
 }
 `;

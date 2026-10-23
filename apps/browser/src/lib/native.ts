@@ -1,5 +1,7 @@
 import { onDownload, releaseProfile } from "@ardia/ardiacore";
 import {
+  cancelFocusMove,
+  claimFocus,
   closeWindow,
   isDarkAppearance,
   onAppEvent,
@@ -10,6 +12,7 @@ import {
   replyToTerminate,
   setAppearance,
   setMenuStateParts,
+  setTrafficLightsCenter,
   setWindowTitle,
   windowIds,
   type MenuBookmark,
@@ -23,6 +26,7 @@ import { splitOf } from "../store/splits";
 import { canGoBack, canGoForward } from "../components/layout/history";
 import type { Bookmarks, BookmarkNode } from "../store/types";
 import { isUtilityWindowId } from "../components/settings/windows";
+import { openingLightsCenter } from "../components/layout/windowLayout";
 import { isInternalTab } from "../components/pages/urls";
 import { sidebarMenuState } from "../components/sidebar/commands";
 import { openWindow as createWindow } from "./actions";
@@ -30,6 +34,8 @@ import { windowOpens } from "./windowOpenOrder";
 import { openExternalUrls } from "../components/littleArdia/actions";
 import { LITTLE_ARDIA_DISABLED_COMMANDS } from "../components/littleArdia/menu";
 import { runCommand } from "./commands";
+import { setFocusSenders } from "./focusClaims";
+import { cancelAbandonedFocusMoves, settlingCommandFocus } from "./focusHandoff";
 import { flushPersistence, resumePersistence } from "./persist";
 import { startWindowCloseGuard } from "./windowClose";
 import { startExtensionsBridge } from "../components/extensions/bridge";
@@ -42,7 +48,9 @@ export function startNativeSync() {
   const store = useBrowser;
   if (!store.getState().windowOrder.length) store.getState().createWindow();
 
-  onCommand(runCommand);
+  setFocusSenders(claimFocus, cancelFocusMove);
+  cancelAbandonedFocusMoves();
+  onCommand((e) => settlingCommandFocus(e, runCommand));
   startWindowCloseGuard();
   startExtensionsBridge();
   onOpenURLs((urls) => openExternalUrls(urls));
@@ -98,6 +106,7 @@ export function startNativeSync() {
       const claim = w.kind === "small" ? s.tabs[w.tabIds[0] ?? ""]?.adoptId : undefined;
       const small = w.kind === "small" ? { kind: "small" as const, size: s.settings.littleArdiaSize, ...(claim?.startsWith("link:") ? { claim } : {}) } : {};
       const made = w.chromeWindow ? { chromeWindow: w.chromeWindow } : {};
+      if (w.kind !== "small") void setTrafficLightsCenter(id, openingLightsCenter(s, id));
       void openWindow(id, { frame: w.frame, incognito: w.incognito, title: titles.get(id), focus, profile, ...(behind ? { behind } : {}), ...small, ...made });
     }
     for (const id of [...open]) {

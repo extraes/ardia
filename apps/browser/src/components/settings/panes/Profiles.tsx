@@ -8,7 +8,7 @@ import { useBrowser } from "../../../store/browser";
 import { useProfiles } from "../../../store/hooks";
 import { plural } from "../../../store/model";
 import { sharingProfiles } from "../../../store/profiles";
-import type { Profile, ProfileColor } from "../../../store/types";
+import type { Profile } from "../../../store/types";
 import { ClearDataDialog } from "../../pages/ClearDataDialog";
 import { useHover } from "../../primitives";
 import { ColorStack } from "../../profiles/CreateProfile";

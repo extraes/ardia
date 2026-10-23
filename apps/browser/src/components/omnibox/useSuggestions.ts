@@ -2,6 +2,7 @@ import {
   buildSuggestions,
   createSuggestFetcher,
   engineById,
+  findBang,
   findScope,
   offeredSiteSearch,
   prepareSuggestions,
@@ -16,6 +17,7 @@ import { bookmarkProfileId } from "../../store/model";
 import { defaultSearchEngine, searchEngines } from "../../store/settings";
 import type { Bookmarks, HistoryEntry } from "../../store/types";
 import { currentBarActions } from "./actions";
+import { useBangs } from "./bangs";
 import { historyHosts, knownHosts } from "./knownHosts";
 
 const NO_HISTORY: HistoryEntry[] = [];
@@ -116,14 +118,16 @@ export function useSuggestions({
   const fetcher = useRef(createSuggestFetcher({ fetch: (url, init) => fetch(url, init) })).current;
   const query = text.trim();
   const fromEngine = suggestEngine(scope, engines, engine);
+  const bangs = useBangs(active && !scope && query.includes("!"));
+  const bang = useMemo(() => (bangs ? findBang(query, bangs) : null), [bangs, query]);
   useEffect(() => {
     const q = query.replace(/^\?/, "").trim();
-    if (!active || !suggestionsOn || !q || /^[a-z][a-z0-9+.-]*:\/\//i.test(q) || scope?.kind === "history") {
+    if (!active || !suggestionsOn || !q || bang || /^[a-z][a-z0-9+.-]*:\/\//i.test(q) || scope?.kind === "history") {
       fetcher.cancel();
       return;
     }
     fetcher.request(fromEngine, q, (list) => setRemote({ text: query, list }));
-  }, [active, suggestionsOn, query, fromEngine, scope, fetcher]);
+  }, [active, suggestionsOn, query, bang, fromEngine, scope, fetcher]);
   useEffect(() => () => fetcher.cancel(), [fetcher]);
 
   const remoteList = useMemo(() => {
@@ -144,6 +148,7 @@ export function useSuggestions({
       currentUrl,
       scope,
       preventInline,
+      bangs,
     });
-  }, [active, text, query, source, engine, preference, remoteList, windowId, currentTabId, currentUrl, scope, preventInline]);
+  }, [active, text, query, source, engine, preference, remoteList, windowId, currentTabId, currentUrl, scope, preventInline, bangs]);
 }

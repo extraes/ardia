@@ -233,10 +233,19 @@ handoff makes no second window.
   groups, profiles and settings) and its size still match.
 - **Picture.** It's captured at quit only: after the final session save has been flushed, and only when the visible
   tab is the saved active tab. The capture draws the RN content view, not the RN root, whose `windowBackgroundColor`
-  fill would hide the backdrop. During the render it hides the backdrop and vibrancy views, and drops masks and
-  filters, because `renderInContext` skips a masked subtree. At launch the picture is decoded into vm_allocate'd
-  pages off the main thread. A capture or write that fails deletes the old picture.
-- **Lifetime.** The claim drops the cover 5 s later, or 0.5 s after RN's content appears. An unclaimed window holding
+  fill would hide the backdrop. During the render it hides the backdrop and vibrancy views and drops filters, because
+  `renderInContext` skips them. Liquid glass (`NSGlassEffectView`, which it draws opaque white) is drawn as a stand-in
+  layer: the glass tint over a white veil of 0.128 in dark (measured against the real glass) and 0.3 in light (an
+  estimate). A masked layer is drawn offscreen with its mask applied and put back as a stand-in, so the address bar's
+  fade and the active tile's rim look as they do live. A layer that only casts a shadow from its shadow path, which
+  `renderInContext` leaves out, gets that shadow drawn by hand (blur twice its radius), so the active tile keeps its lift. At launch the picture is decoded into vm_allocate'd pages off
+  the main thread. A capture or write that fails deletes the old picture.
+- **Handoff.** While the picture is up, the claimed window's RN root has no fill, so RN's content draws over the
+  picture as it commits instead of the root's opaque fill hiding it (the blank 30-270 ms window of 0.2.39). The
+  picture and backdrop go once RN's own full-size backdrop is in the tree, 50 ms later, or 1.5 s after RN's content
+  appears at the latest; the root's fill comes back with them. If RN's backdrop is gone again by then (a JS reload), the
+  picture stays and the wait starts over.
+- **Lifetime.** The claim drops the cover 5 s later, or 2 s after RN's content appears. An unclaimed window holding
   its page stays claimable past 15 s; one without a page is closed. The user can close it before the claim, and JS then
   gets the same `close` event a normal close sends. Clearing history and turning session restore off erase the
   pictures, whatever the switch says.

@@ -20,7 +20,6 @@ NS_ASSUME_NONNULL_BEGIN
 + (void)deviceChooser:(int)chooserId action:(NSString *)action NS_SWIFT_NAME(deviceChooser(_:action:));
 + (NSArray<NSDictionary *> *)testExternalLaunches;
 + (BOOL)devShowBluetoothChooser:(int)browserId unauthorized:(BOOL)unauthorized NS_SWIFT_NAME(devShowBluetoothChooser(browserId:unauthorized:));
-+ (BOOL)devReservedGlobalShortcut:(NSString *)shortcut NS_SWIFT_NAME(devReservedGlobalShortcut(_:));
 + (NSArray<NSDictionary *> *)testChooserEvents;
 + (BOOL)shareTabInstead:(int)capturerBrowserId target:(int)targetBrowserId NS_SWIFT_NAME(shareTabInstead(capturer:target:));
 + (BOOL)showCastDialog:(int)browserId NS_SWIFT_NAME(showCastDialog(browserId:));
@@ -53,7 +52,6 @@ NS_ASSUME_NONNULL_BEGIN
           name:(nullable NSString *)name
     completion:(void (^)(NSDictionary<NSString *, id> *_Nullable result))completion
     NS_SWIFT_NAME(fetch(_:profile:name:completion:));
-+ (void)pruneProfile:(NSString *)profile keeping:(NSArray<NSString *> *)names NS_SWIFT_NAME(prune(profile:keeping:));
 @end
 
 NS_ASSUME_NONNULL_END

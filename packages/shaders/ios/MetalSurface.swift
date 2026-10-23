@@ -165,11 +165,10 @@ final class WindowActivity {
   static var override: Bool? = ProcessInfo.processInfo.environment["ARDIA_SHADERS_FORCE_KEY"] == "1" ? true : nil {
     didSet { NotificationCenter.default.post(name: changed, object: nil) }
   }
-  static var reduceMotionOverride: Bool?
   static let changed = Notification.Name("ArdiaShadersWindowActivityChanged")
 
   static var reduceMotion: Bool {
-    reduceMotionOverride ?? NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+    NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
   }
 
   private(set) weak var window: NSWindow?
@@ -181,8 +180,6 @@ final class WindowActivity {
   }
 
   deinit { detach() }
-
-  var isKey: Bool { Self.override ?? window?.isKeyWindow ?? false }
 
   var isActive: Bool {
     if let forced = Self.override { return forced }

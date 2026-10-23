@@ -1,6 +1,7 @@
+import { claimFocusTag, findFocus } from "../lib/focusClaims";
 import { Surface, Symbol } from "@ardia/shell";
 import { useEffect, useRef, useState } from "react";
-import { Animated, Easing, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
+import { Animated, Easing, findNodeHandle, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
 import { hex, useTheme } from "../lib/theme";
 import { webviews } from "../lib/webviews";
 import { useBrowser } from "../store/browser";
@@ -38,6 +39,8 @@ function FindBarPanel({ tabId, find }: { tabId: string; find: FindState }) {
     handledFocus.set(tabId, request);
     input.current?.focus();
     input.current?.setSelection(0, find.query.length);
+    const windowId = useBrowser.getState().tabs[tabId]?.windowId;
+    if (windowId) claimFocusTag(windowId, findFocus(tabId), () => findNodeHandle(input.current));
     if (find.query) void webviews.get(tabId)?.find(find.query, true, false);
   }, [find.focusRequest]);
 

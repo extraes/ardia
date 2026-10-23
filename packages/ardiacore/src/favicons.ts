@@ -22,5 +22,3 @@ export async function fetchFavicon(url: string, profile: string, page?: string):
   if (page && png) await engineCall("ac_favicons_set", profile, { page, icon: url, png }).catch(() => null);
   return image;
 }
-
-export const removeLegacyFavicons = (profile: string) => Cef.removeLegacyFavicons(profile);

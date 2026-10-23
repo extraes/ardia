@@ -28,7 +28,7 @@ function labels(s: Suggestion): [string, string | null] {
       if (s.tabId) return [s.title || displayUrl(s.url), "Switch to Tab"];
       return s.title ? [s.title, displayUrl(s.url)] : [displayUrl(s.url), null];
     case "search":
-      return [s.query, null];
+      return [s.bang ? `Search ${s.engine} for ${s.query}` : s.query, null];
     case "calc":
       return [s.value, s.expression];
     case "action":

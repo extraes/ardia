@@ -1,4 +1,4 @@
-import { faviconsFor, fetchFavicon, onHistoryChanged, removeLegacyFavicons } from "@ardia/ardiacore";
+import { faviconsFor, fetchFavicon, onHistoryChanged } from "@ardia/ardiacore";
 import { iconTheme, readDocument, removeDocument, type IconTheme } from "@ardia/shell";
 import { useEffect } from "react";
 import { create } from "zustand";
@@ -289,7 +289,6 @@ function removeLegacyFiles(s: Pick<BrowserState, "profiles">) {
     try {
       if (readDocument(doc) === null) continue;
       removeDocument(doc);
-      if (!isIncognitoProfile(id)) void removeLegacyFavicons(engineProfile(id)).catch(() => {});
     } catch (error) {
       console.warn(`[favicons] couldn't remove ${doc}`, error);
     }

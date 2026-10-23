@@ -83,8 +83,6 @@ export function setPopover(tabId: string, popover: Store["popover"][string]) {
   usePages.setState((s) => ({ popover: { ...s.popover, [tabId]: popover } }));
 }
 
-export const usePopover = (tabId: string | undefined) => usePages((s) => (tabId ? (s.popover[tabId] ?? null) : null));
-
 export function useFullscreenTab(windowId: string): string | undefined {
   const fullscreen = usePages((s) => {
     let ids = "";

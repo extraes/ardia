@@ -13,7 +13,7 @@ import { barWidth } from "./NewTabPage";
 import { closeNewTabBar } from "./omnibox/newTabBar";
 import type { NewTabTarget } from "../store/types";
 import { Omnibox, PANEL_TEXT_LEFT } from "./Omnibox";
-import { closePanelToHeroBar } from "./omnibox/barState";
+import { closePanelToHeroBar, type BarDismissal } from "./omnibox/barState";
 import { insecureLevel, URL_FIELD, urlTextLeft } from "./Toolbar";
 
 const RIGHT_OF_URL = 40;
@@ -60,7 +60,7 @@ export function CommandPanel({ windowWidth }: { windowWidth: number }) {
 
   const room = (left: number, fallback: number) => (windowWidth > 0 ? windowWidth - left - WINDOW_MARGIN : fallback);
   const onCancel = () => useBrowser.getState().closePanel(windowId);
-  const onDone = () => closePanelToHeroBar(windowId, activeId);
+  const onDone = (reason?: BarDismissal) => closePanelToHeroBar(windowId, activeId, reason);
   const surface = (radius: number) => panelSurface(theme, radius);
 
   if (anchor.sidebar) {

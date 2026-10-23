@@ -4,8 +4,6 @@ public class AreaLightModule: Module {
   public func definition() -> ModuleDefinition {
     Name("ArdiaAreaLight")
 
-    AsyncFunction("debugSetWindowActive") { (value: Bool?) in WindowActivity.override = value }.runOnQueue(.main)
-    AsyncFunction("debugSetReduceMotion") { (value: Bool?) in WindowActivity.reduceMotionOverride = value }.runOnQueue(.main)
     AsyncFunction("debugSnapshot") { (dir: String) -> [[String: Any]] in
       try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
       return MetalSurface.instances.enumerated().compactMap { index, view in

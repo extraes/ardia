@@ -31,8 +31,6 @@ struct RequestAction;
 }
 }
 
-extern const char* g_ardia_user_agent_brand;
-
 extern int g_ardia_disk_space_check_seconds;
 
 extern bool g_ardia_lazy_storage_usage;

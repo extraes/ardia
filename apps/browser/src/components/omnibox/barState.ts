@@ -1,6 +1,8 @@
 import type { SearchScope } from "@ardia/core";
 import { useBrowser } from "../../store/browser";
 import { activeTabId } from "../../store/model";
+import { expectFocus, heroBarFocus } from "../../lib/focusClaims";
+import { webviews } from "../../lib/webviews";
 
 export type BarSnapshot = {
   typed: string;
@@ -33,12 +35,17 @@ export function registerHeroBar(windowId: string, tabId: string, focus: () => vo
 export function focusHeroBar(windowId: string, tabId: string | undefined): boolean {
   const bar = heroBars.get(windowId);
   if (!bar || bar.tabId !== tabId) return false;
+  expectFocus(windowId, heroBarFocus(tabId));
   bar.focus();
   return true;
 }
 
-export function closePanelToHeroBar(windowId: string, tabId: string) {
+export type BarDismissal = "escape" | "closeKey";
+
+export function closePanelToHeroBar(windowId: string, tabId: string, reason?: BarDismissal) {
   useBrowser.getState().closePanel(windowId);
   const now = useBrowser.getState();
-  if (activeTabId(now, windowId) === tabId && !now.tabs[tabId]?.url) focusHeroBar(windowId, tabId);
+  if (activeTabId(now, windowId) !== tabId) return;
+  if (!now.tabs[tabId]?.url) focusHeroBar(windowId, tabId);
+  else if (reason && now.tabs[tabId]?.windowId === windowId) void webviews.get(tabId)?.focus();
 }

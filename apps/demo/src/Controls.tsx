@@ -60,8 +60,8 @@ function setAddress(mode: AddressMode) {
 
 type Option = { value: string; label: string; hint?: string; disabled?: boolean };
 export type Control =
-  | { kind: "choice"; id: "tabs" | "address" | "profile" | "theme"; label: string; value: string; options: Option[] }
-  | { kind: "action"; id: "split" | "command"; label: string; icon: string; hint: string; on?: boolean };
+  | { kind: "choice"; id: "tabs" | "address" | "newTabOpens" | "profile" | "theme"; label: string; value: string; options: Option[] }
+  | { kind: "action"; id: "newTab" | "split" | "command"; label: string; icon: string; hint: string; on?: boolean };
 
 export function controlModel(s: BrowserState): Control[] {
   const w = focusedWindow(s);
@@ -93,6 +93,17 @@ export function controlModel(s: BrowserState): Control[] {
         { value: "sidebar", label: "Sidebar", disabled: onTop },
       ],
     },
+    {
+      kind: "choice",
+      id: "newTabOpens",
+      label: "New tabs",
+      value: s.settings.newTabOpens,
+      options: [
+        { value: "page", label: "Page" },
+        { value: "commandBar", label: "Command bar" },
+      ],
+    },
+    { kind: "action", id: "newTab", label: "New tab", icon: "plus", hint: `${CMD}T` },
     { kind: "action", id: "split", label: "Split view", icon: "rectangle.split.2x1", hint: `${CTRL}⇧=`, on: !!(active && splitOf(s, active)) },
     { kind: "action", id: "command", label: "Command bar", icon: "magnifyingglass", hint: `${CMD}L` },
     { kind: "choice", id: "profile", label: "Profile", value: w?.profileId ?? "", options: profiles.map((p, i) => ({ value: p.id, label: p.name, hint: `${CTRL}${i + 1}` })) },
@@ -112,6 +123,8 @@ export function controlModel(s: BrowserState): Control[] {
 export function applyControl(id: Control["id"], value?: string) {
   if (id === "tabs") return setTabs(value as TabsMode);
   if (id === "address") return setAddress(value as AddressMode);
+  if (id === "newTabOpens" && (value === "page" || value === "commandBar")) return useBrowser.getState().updateSettings({ newTabOpens: value });
+  if (id === "newTab") return run("newTab");
   if (id === "profile" && value) return run("switchProfile", value);
   if (id === "theme" && value) return run("setAppearance", value);
   if (id === "split") return toggleSplit();

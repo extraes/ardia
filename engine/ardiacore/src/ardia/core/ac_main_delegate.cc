@@ -421,7 +421,6 @@ void ACMainDelegate::PreSandboxStartup() {
   if (process_type.empty()) {
     InstallAppOverrides();
     InstallChromeHooks();
-    g_ardia_user_agent_brand = "Google Chrome";
   }
   ChromeMainDelegate::PreSandboxStartup();
 }

@@ -1,5 +1,6 @@
 #import "ardia/core/public/ArdiaCore.h"
 
+#include <cmath>
 #include <map>
 #include <sstream>
 #include <memory>
@@ -72,6 +73,7 @@
 #include "url/gurl.h"
 #include "url/origin.h"
 #include "url/scheme_host_port.h"
+#include "url/url_constants.h"
 #include "content/public/browser/render_widget_host_view.h"
 #include "content/public/browser/spare_render_process_host_manager.h"
 #include "content/public/browser/web_contents.h"
@@ -84,6 +86,7 @@
 #include "ardia/core/ac_autofill_prompt.h"
 #include "ardia/core/ac_browser.h"
 #include "ardia/core/ac_content_hooks.h"
+#include "ardia/core/ac_contents_background.h"
 #include "ardia/core/ac_browser_window.h"
 #include "ardia/core/ac_extension_view.h"
 #include "ardia/core/ac_installed_bubble.h"
@@ -1299,6 +1302,7 @@ void WatchTracingStart(std::shared_ptr<TracingStart> start, int checks_left) {
   ardiacore::TabBridge* bridge = ardiacore::TabBridge::GetOrCreate(contents);
   if (ahead) {
     bridge->set_made_ahead();
+    ardiacore::MarkAheadBlank(contents);
   }
   return bridge->tab();
 }
@@ -1745,6 +1749,9 @@ std::optional<bool> RunPageCommand(content::WebContents* contents, int command) 
   }
   content::NavigationController::LoadURLParams params(
       GURL(base::SysNSStringToUTF8(url)));
+  if (params.url.SchemeIs(url::kJavaScriptScheme)) {
+    ardiacore::EndAheadBlank(_contents);
+  }
   params.transition_type = userInitiated
                                ? ui::PageTransitionFromInt(
                                      ui::PAGE_TRANSITION_TYPED |
@@ -1793,6 +1800,7 @@ std::optional<bool> RunPageCommand(content::WebContents* contents, int command) 
 
 - (void)executeJavaScript:(NSString*)code userGesture:(BOOL)userGesture {
   if (_contents) {
+    ardiacore::EndAheadBlank(_contents);
     ardiacore::PageChannel::GetOrCreate(_contents)->Execute(
         base::SysNSStringToUTF8(code), userGesture);
   }
@@ -1891,13 +1899,35 @@ std::optional<bool> RunPageCommand(content::WebContents* contents, int command) 
     return;
   }
   if (!color) {
-    _contents->SetPageBaseBackgroundColor(std::nullopt);
+    ardiacore::SetHostPageBaseBackgroundColor(_contents, std::nullopt);
     return;
   }
   NSColor* rgb = [color colorUsingColorSpace:NSColorSpace.sRGBColorSpace];
-  _contents->SetPageBaseBackgroundColor(SkColorSetARGB(
-      rgb.alphaComponent * 255, rgb.redComponent * 255, rgb.greenComponent * 255,
-      rgb.blueComponent * 255));
+  ardiacore::SetHostPageBaseBackgroundColor(
+      _contents, SkColorSetARGB(rgb.alphaComponent * 255, rgb.redComponent * 255,
+                                rgb.greenComponent * 255, rgb.blueComponent * 255));
+}
+
+- (NSColor*)contentsBackgroundColor {
+  std::optional<SkColor> color =
+      _contents ? ardiacore::ContentsBackgroundColor(_contents) : std::nullopt;
+  return color ? [NSColor colorWithSRGBRed:SkColorGetR(*color) / 255.0
+                                     green:SkColorGetG(*color) / 255.0
+                                      blue:SkColorGetB(*color) / 255.0
+                                     alpha:1]
+               : nil;
+}
+
+- (void)setContentsBackgroundColor:(NSColor*)color {
+  if (!_contents) {
+    return;
+  }
+  NSColor* rgb = [color colorUsingColorSpace:NSColorSpace.sRGBColorSpace];
+  ardiacore::SetContentsBackgroundColor(
+      _contents, rgb ? std::optional<SkColor>(SkColorSetRGB(std::lround(rgb.redComponent * 255),
+                                                            std::lround(rgb.greenComponent * 255),
+                                                            std::lround(rgb.blueComponent * 255)))
+                     : std::nullopt);
 }
 
 - (NSString*)executeExtensionAction:(NSString*)extensionId {
@@ -2270,6 +2300,7 @@ TabSharingInfoBarDelegate* TabSharingDelegateFor(content::WebContents* contents,
 
 - (void)executeJavaScript:(NSString*)code frame:(NSString*)frameId {
   if (_contents) {
+    ardiacore::EndAheadBlank(_contents);
     ardiacore::PageChannel::GetOrCreate(_contents)->ExecuteInFrame(
         base::SysNSStringToUTF8(frameId), base::SysNSStringToUTF8(code));
   }
@@ -2286,6 +2317,7 @@ TabSharingInfoBarDelegate* TabSharingDelegateFor(content::WebContents* contents,
     completion(nil);
     return;
   }
+  ardiacore::EndAheadBlank(_contents);
   ardiacore::PageChannel::GetOrCreate(_contents)->Evaluate(
       base::SysNSStringToUTF8(code), userGesture,
       base::BindOnce(
@@ -2297,6 +2329,7 @@ TabSharingInfoBarDelegate* TabSharingDelegateFor(content::WebContents* contents,
 
 - (void)callPage:(NSString*)kind json:(NSString*)json {
   if (_contents) {
+    ardiacore::EndAheadBlank(_contents);
     ardiacore::PageChannel::GetOrCreate(_contents)->CallPage(
         base::SysNSStringToUTF8(kind), base::SysNSStringToUTF8(json));
   }
@@ -2304,6 +2337,7 @@ TabSharingInfoBarDelegate* TabSharingDelegateFor(content::WebContents* contents,
 
 - (void)callFrame:(NSString*)frameId kind:(NSString*)kind json:(NSString*)json {
   if (_contents) {
+    ardiacore::EndAheadBlank(_contents);
     ardiacore::PageChannel::GetOrCreate(_contents)->CallFrame(
         base::SysNSStringToUTF8(frameId), base::SysNSStringToUTF8(kind),
         base::SysNSStringToUTF8(json));
@@ -2382,7 +2416,11 @@ TabSharingInfoBarDelegate* TabSharingDelegateFor(content::WebContents* contents,
 
 - (void)loadURL:(NSString*)url {
   if (_contents) {
-    _contents->GetController().LoadURL(GURL(base::SysNSStringToUTF8(url)),
+    GURL target(base::SysNSStringToUTF8(url));
+    if (target.SchemeIs(url::kJavaScriptScheme)) {
+      ardiacore::EndAheadBlank(_contents);
+    }
+    _contents->GetController().LoadURL(target,
                                        content::Referrer(),
                                        ui::PAGE_TRANSITION_TYPED, std::string());
   }

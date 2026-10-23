@@ -16,6 +16,7 @@
 #include "content/public/browser/devtools_agent_host_client.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_contents_user_data.h"
+#include "ardia/core/ac_contents_background.h"
 
 namespace ardiacore {
 
@@ -42,6 +43,11 @@ class DevToolsCaller : public content::DevToolsAgentHostClient,
             base::DictValue params,
             std::optional<base::TimeDelta> timeout,
             DevToolsReply reply) {
+    if (method == "Page.captureScreenshot" && InAheadBlank(&GetWebContents())) {
+      Answer(std::move(reply), std::nullopt, "the tab shows only Ardia's blank page");
+      return;
+    }
+    EndAheadBlank(&GetWebContents());
     if (!host_) {
       host_ = content::DevToolsAgentHost::GetOrCreateFor(&GetWebContents());
       if (!host_ || !host_->AttachClient(this)) {

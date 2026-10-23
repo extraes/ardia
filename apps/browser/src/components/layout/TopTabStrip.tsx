@@ -20,7 +20,7 @@ import { openNewTabInSplit } from "./splitActions";
 import { toggleNewTabBar } from "../omnibox/newTabBar";
 import { setMeasuredWidth, useMeasuredWidths } from "./measuredWidths";
 import { usePeek } from "./usePeek";
-import { lightsCenter } from "./dockMotion";
+import { lightsCenter, TOP_STRIP_LIGHTS_CENTER } from "./dockMotion";
 import {
   dragGeometry,
   dragRange,
@@ -67,7 +67,6 @@ const GAP = 4;
 const LIFT_SLOP = 12;
 const LIFT_MS = 150;
 const LIGHTS_GAP = 8;
-const LIGHTS_CENTER: [number, number] = [20.75, 20.75];
 
 const FloatingStrip = createContext(false);
 
@@ -92,7 +91,7 @@ export function TopTabStrip({ width, floating = false, hidden = false, swipe = t
 
   useEffect(() => {
     if (floating || hidden) return;
-    void setTrafficLightsCenter(windowId, LIGHTS_CENTER);
+    void setTrafficLightsCenter(windowId, [...TOP_STRIP_LIGHTS_CENTER]);
     return () => void setTrafficLightsCenter(windowId, null);
   }, [floating, hidden, windowId]);
 

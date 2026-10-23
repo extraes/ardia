@@ -45,6 +45,32 @@ test("the traffic lights go with the sidebar: at their place when it's shown, pa
   }
 });
 
+test("the peek panel covers the card's rounded corners, so no sliver of the page shows round its own", async () => {
+  const { layout } = await import("../../lib/theme.ts");
+  const [px, py] = dm.PEEK_ORIGIN;
+  const height = 860;
+  const panel = { left: px, top: py, bottom: height - dm.PEEK_BOTTOM, r: dm.PEEK_RADIUS };
+  const card = { left: layout.cardInset, top: layout.cardTop, bottom: height - layout.cardInset, r: layout.cardRadius };
+  assert.ok(panel.left <= card.left && panel.top <= card.top && panel.bottom >= card.bottom, "the panel's edges reach past the card's");
+  const corners = [
+    [[panel.left + panel.r, panel.top + panel.r], [card.left + card.r, card.top + card.r]],
+    [[panel.left + panel.r, panel.bottom - panel.r], [card.left + card.r, card.bottom - card.r]],
+  ];
+  for (const [[ax, ay], [bx, by]] of corners) {
+    const apart = Math.hypot(ax - bx, ay - by);
+    assert.ok(apart + card.r <= panel.r - 0.5, `the card's corner arc stays half a point inside the panel's (${apart.toFixed(2)} apart)`);
+  }
+});
+
+test("with the address field in the sidebar the lights sit Arc's 3 pt higher, docked, sliding and in the peek", () => {
+  const arc = dm.ARC_LIGHTS_CENTER;
+  assert.deepEqual(arc, [dm.LIGHTS_CENTER[0], dm.LIGHTS_CENTER[1] - 3]);
+  assert.deepEqual(dm.lightsCenter(0, 0, arc), [25, 24], "docked: placed, not left at AppKit's default");
+  assert.deepEqual(dm.lightsCenter(95, 0, arc), [25 - 95, 24], "half way out on the same row");
+  const [px, py] = dm.PEEK_ORIGIN;
+  assert.deepEqual(dm.lightsCenter(-px, py, arc), [25 + px, 24 + py], "in the peek panel");
+});
+
 test("the card's left edge runs from the inset to the sidebar's width", () => {
   assert.equal(dm.cardLeft(1, 190, 7), 190);
   assert.equal(dm.cardLeft(0, 190, 7), 7);
@@ -178,6 +204,17 @@ test("a peek that's out is remembered per window (Arc docks from it at once)", (
   assert.equal(dm.peekShown("w2"), false);
   dm.setPeekShown("w1", false);
   assert.equal(dm.peekShown("w1"), false);
+});
+
+test("the peek panel covers the page up to its right edge, only while it's out", () => {
+  assert.equal(dm.overPeek("w1", 0), false);
+  dm.setPeekShown("w1", true, 5 + 240);
+  assert.equal(dm.overPeek("w1", 120), true);
+  assert.equal(dm.overPeek("w1", 244.5), true);
+  assert.equal(dm.overPeek("w1", 245), false);
+  assert.equal(dm.overPeek("w2", 120), false);
+  dm.setPeekShown("w1", false);
+  assert.equal(dm.overPeek("w1", 120), false);
 });
 
 test("Arc's layout keeps the address bar in a hidden sidebar (no toolbar on the card); Dia's layout and the switch off don't", async () => {

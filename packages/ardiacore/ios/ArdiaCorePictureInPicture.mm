@@ -1,11 +1,14 @@
 #import "ArdiaCorePictureInPicture.h"
 
 #import "ACChromeWindow.h"
+#import "ArdiaCorePiPThrow.h"
 #import "ArdiaCorePiPZoom.h"
 #import "ArdiaCoreWebViewInternal.h"
 
 #import <objc/runtime.h>
 #import <QuartzCore/QuartzCore.h>
+
+#include <vector>
 
 @interface NSWindow (ACPreventsActivation)
 - (void)_setPreventsActivation:(BOOL)prevents;
@@ -23,6 +26,7 @@ constexpr CGFloat kRimAlpha = 0.17;
 
 NSString *const kKeepOnTopDefault = @"ACPictureInPictureKeepOnTop";
 NSString *const kZoomDefault = @"ACPictureInPictureZoom";
+NSString *const kThrowDefault = @"ACPictureInPictureThrow";
 const void *const kControllerKey = &kControllerKey;
 const void *const kZoomKey = &kZoomKey;
 
@@ -54,7 +58,7 @@ BOOL IsChromeDocumentPictureInPicture(NSWindow *window) {
   return frameless && [window isKindOfClass:frameless] && ShowsPage(window.contentView);
 }
 
-NSScreen *ScreenFor(NSRect frame) {
+NSScreen *OverlappingScreen(NSRect frame) {
   NSScreen *best = nil;
   CGFloat bestArea = 0;
   for (NSScreen *screen in NSScreen.screens) {
@@ -62,8 +66,10 @@ NSScreen *ScreenFor(NSRect frame) {
     CGFloat area = overlap.size.width * overlap.size.height;
     if (area > bestArea) best = screen, bestArea = area;
   }
-  return best ?: NSScreen.mainScreen;
+  return best;
 }
+
+NSScreen *ScreenFor(NSRect frame) { return OverlappingScreen(frame) ?: NSScreen.mainScreen; }
 
 BOOL ScreenAt(CGFloat x, CGFloat y) {
   for (NSScreen *screen in NSScreen.screens)
@@ -85,6 +91,39 @@ void ActivateApp(NSString *why) {
   gActivations++;
   if (ardiacore_host::Background()) return ardiacore_host::LogActivation([@"activate (skipped in a test instance): " stringByAppendingString:why]);
   [NSApp activate];
+}
+
+BOOL ThrowEnabled() {
+  id value = [NSUserDefaults.standardUserDefaults objectForKey:kThrowDefault];
+  return value ? [value boolValue] : YES;
+}
+
+NSPoint PointerOf(NSEvent *event) {
+  CGPoint point = CGEventGetLocation(event.CGEvent);
+  return NSMakePoint(point.x, NSMaxY(NSScreen.screens.firstObject.frame) - point.y);
+}
+
+ardiacore_pip_throw::Rect ThrowRect(NSRect r) { return {NSMinX(r), NSMinY(r), NSWidth(r), NSHeight(r)}; }
+
+int ScreenIndex(NSScreen *screen) {
+  const NSUInteger index = screen ? [NSScreen.screens indexOfObjectIdenticalTo:screen] : NSNotFound;
+  return index == NSNotFound ? -1 : (int)index;
+}
+
+std::vector<ardiacore_pip_throw::Screen> ThrowScreens() {
+  std::vector<ardiacore_pip_throw::Screen> screens;
+  for (NSScreen *screen in NSScreen.screens) screens.push_back({ThrowRect(screen.frame), ThrowRect(screen.visibleFrame)});
+  return screens;
+}
+
+NSString *CornerName(int corner) {
+  switch (corner) {
+    case ardiacore_pip_throw::kTopLeft: return @"topLeft";
+    case ardiacore_pip_throw::kTopRight: return @"topRight";
+    case ardiacore_pip_throw::kBottomLeft: return @"bottomLeft";
+    case ardiacore_pip_throw::kBottomRight: return @"bottomRight";
+    default: return @"none";
+  }
 }
 
 }
@@ -199,6 +238,15 @@ typedef NS_ENUM(NSInteger, ACPiPEdge) { ACPiPEdgeNone = 0, ACPiPEdgeLeft = -1, A
 - (void)backToTab;
 - (void)unstash;
 - (NSMenu *)menu;
+- (void)stopMotion;
+- (void)abandonSwipe;
+- (NSScreen *)gestureHome;
+- (void)dragReleasedAt:(NSPoint)pointer velocity:(NSPoint)velocity;
++ (BOOL)handleSwipe:(NSEvent *)event;
++ (void)abandonSwipeOn:(NSWindow *)window;
+- (NSDictionary *)throwInfo;
+- (void)devSwipe:(NSArray<NSString *> *)args;
+- (void)devDrag:(NSArray<NSString *> *)args;
 @end
 
 @implementation ACPiPOverlay
@@ -239,6 +287,19 @@ typedef NS_ENUM(NSInteger, ACPiPEdge) { ACPiPEdgeNone = 0, ACPiPEdgeLeft = -1, A
   NSTimer *_slide;
   BOOL _animating;
   BOOL _sawDrag;
+  BOOL _swiping;
+  NSPoint _swipeGrab;
+  NSPoint _swipeLastDelta;
+  NSPoint _swipePointer;
+  CFTimeInterval _swipeBeganAt;
+  NSTimeInterval _swipeLastAt;
+  NSRect _swipeStart;
+  NSDictionary *_lastRelease;
+  NSDictionary *_lastSwipe;
+  NSMutableDictionary *_lastThrow;
+  __weak NSScreen *_lastScreen;
+  __weak NSScreen *_swipeHome;
+  __weak NSScreen *_stashScreen;
 }
 
 + (instancetype)forWindow:(NSWindow *)window {
@@ -266,6 +327,10 @@ typedef NS_ENUM(NSInteger, ACPiPEdge) { ACPiPEdgeNone = 0, ACPiPEdgeLeft = -1, A
                                               object:window
                                                queue:nil
                                           usingBlock:^(NSNotification *) { [weakSelf roundCorners]; }]];
+    [_observers addObject:[center addObserverForName:NSWindowWillStartLiveResizeNotification
+                                              object:window
+                                               queue:nil
+                                          usingBlock:^(NSNotification *) { [weakSelf stopMotion]; }]];
     [_observers addObject:[center addObserverForName:NSWindowWillCloseNotification
                                               object:window
                                                queue:nil
@@ -276,6 +341,7 @@ typedef NS_ENUM(NSInteger, ACPiPEdge) { ACPiPEdgeNone = 0, ACPiPEdgeLeft = -1, A
 }
 
 - (void)detach {
+  [ACPiPController abandonSwipeOn:_window];
   for (id observer in _observers) [NSNotificationCenter.defaultCenter removeObserver:observer];
   [_observers removeAllObjects];
   [NSObject cancelPreviousPerformRequestsWithTarget:self];
@@ -339,15 +405,23 @@ typedef NS_ENUM(NSInteger, ACPiPEdge) { ACPiPEdgeNone = 0, ACPiPEdgeLeft = -1, A
 }
 
 - (void)windowMoved {
-  if (_animating) return;
+  [self homeScreen];
+  if (_animating || (_swiping && NSProcessInfo.processInfo.systemUptime - _swipeLastAt < 1)) return;
+  if (_swiping) [ACPiPController abandonSwipeOn:_window];
   if (NSEvent.pressedMouseButtons & 1) _sawDrag = YES;
   [NSObject cancelPreviousPerformRequestsWithTarget:self selector:@selector(settle) object:nil];
   [self performSelector:@selector(settle) withObject:nil afterDelay:0.12];
 }
 
+- (NSScreen *)homeScreen {
+  NSScreen *screen = OverlappingScreen(_window.frame);
+  if (screen) _lastScreen = screen;
+  return screen ?: _lastScreen ?: NSScreen.mainScreen;
+}
+
 - (ACPiPEdge)edgeBeyond {
   NSRect frame = _window.frame;
-  NSRect visible = ScreenFor(frame).visibleFrame;
+  NSRect visible = [self homeScreen].visibleFrame;
   CGFloat half = NSWidth(frame) / 2;
   if (NSMaxX(frame) - NSMaxX(visible) > half && !ScreenAt(NSMaxX(visible) + 1, NSMidY(frame))) return ACPiPEdgeRight;
   if (NSMinX(visible) - NSMinX(frame) > half && !ScreenAt(NSMinX(visible) - 1, NSMidY(frame))) return ACPiPEdgeLeft;
@@ -365,17 +439,32 @@ typedef NS_ENUM(NSInteger, ACPiPEdge) { ACPiPEdgeNone = 0, ACPiPEdgeLeft = -1, A
   if (edge != ACPiPEdgeNone) return [self stashAt:edge];
   if (_stashedEdge != ACPiPEdgeNone && !dragged) return [self stashAt:_stashedEdge];
   if (_stashedEdge != ACPiPEdgeNone) [self setStashedEdge:ACPiPEdgeNone];
+  [self rescueIfLost];
+}
+
+- (NSScreen *)gestureHome {
+  return _stashedEdge != ACPiPEdgeNone && _stashScreen ? _stashScreen : [self homeScreen];
+}
+
+- (void)rescueIfLost {
+  if (_stashedEdge != ACPiPEdgeNone || _animating || _swiping || !_window.visible) return;
+  const auto screens = ThrowScreens();
+  const auto rescued =
+      ardiacore_pip_throw::Rescue(ThrowRect(_window.frame), screens.data(), (int)screens.size(), ScreenIndex([self homeScreen]));
+  const NSRect target = NSMakeRect(rescued.x, rescued.y, rescued.w, rescued.h);
+  if (!NSEqualRects(target, _window.frame)) [self animateTo:target];
 }
 
 - (NSRect)frameStashedAt:(ACPiPEdge)edge {
   NSRect frame = _window.frame;
-  NSRect visible = ScreenFor(frame).visibleFrame;
+  NSRect visible = [self homeScreen].visibleFrame;
   frame.origin.x = edge == ACPiPEdgeRight ? NSMaxX(visible) - kPeek : NSMinX(visible) - NSWidth(frame) + kPeek;
   frame.origin.y = MIN(MAX(NSMinY(frame), NSMinY(visible)), NSMaxY(visible) - NSHeight(frame));
   return frame;
 }
 
 - (void)stashAt:(ACPiPEdge)edge {
+  _stashScreen = [self homeScreen];
   [self setStashedEdge:edge];
   [self animateTo:[self frameStashedAt:edge]];
 }
@@ -384,7 +473,7 @@ typedef NS_ENUM(NSInteger, ACPiPEdge) { ACPiPEdgeNone = 0, ACPiPEdgeLeft = -1, A
   ACPiPEdge edge = _stashedEdge;
   if (edge == ACPiPEdgeNone) return;
   NSRect frame = _window.frame;
-  NSRect visible = ScreenFor(frame).visibleFrame;
+  NSRect visible = [self homeScreen].visibleFrame;
   frame.origin.x = edge == ACPiPEdgeRight ? NSMaxX(visible) - NSWidth(frame) - kReturnMargin : NSMinX(visible) + kReturnMargin;
   [self setStashedEdge:ACPiPEdgeNone];
   [self animateTo:frame];
@@ -425,8 +514,302 @@ typedef NS_ENUM(NSInteger, ACPiPEdge) { ACPiPEdgeNone = 0, ACPiPEdgeLeft = -1, A
     if (t < 1 && strongSelf) return;
     [timer invalidate];
     if (strongSelf) strongSelf->_animating = NO, strongSelf->_sawDrag = NO;
+    [strongSelf rescueIfLost];
   }];
   [NSRunLoop.currentRunLoop addTimer:_slide forMode:NSRunLoopCommonModes];
+}
+
+- (void)stopMotion {
+  [_slide invalidate];
+  _slide = nil;
+  _animating = NO;
+}
+
+- (BOOL)throwFrom:(NSPoint)grab velocity:(NSPoint)velocity {
+  NSRect frame = _window.frame;
+  NSScreen *screen = [self homeScreen];
+  ardiacore_pip_throw::Corner corner =
+      ardiacore_pip_throw::PickCorner({grab.x, grab.y}, {velocity.x, velocity.y}, ThrowRect(screen.frame));
+  if (corner == ardiacore_pip_throw::kNoCorner) return NO;
+  ardiacore_pip_throw::Rect target =
+      ardiacore_pip_throw::CornerFrame(corner, NSWidth(frame), NSHeight(frame), ThrowRect(screen.visibleFrame));
+  [self throwTo:NSMakeRect(target.x, target.y, target.w, target.h) velocity:velocity corner:corner];
+  return YES;
+}
+
+- (void)throwTo:(NSRect)target velocity:(NSPoint)velocity corner:(int)corner {
+  [self stopMotion];
+  [NSObject cancelPreviousPerformRequestsWithTarget:self selector:@selector(settle) object:nil];
+  _sawDrag = NO;
+  if (_stashedEdge != ACPiPEdgeNone) [self setStashedEdge:ACPiPEdgeNone];
+  const NSRect from = _window.frame;
+  NSMutableArray *trace = [NSMutableArray array];
+  NSMutableDictionary *record = [@{
+    @"corner" : CornerName(corner),
+    @"from" : NSStringFromRect(from),
+    @"target" : NSStringFromRect(target),
+    @"velocity" : NSStringFromPoint(velocity),
+    @"frames" : trace,
+  } mutableCopy];
+  _lastThrow = record;
+  _animating = YES;
+  const CFTimeInterval start = CACurrentMediaTime();
+  __weak ACPiPController *weakSelf = self;
+  _slide = [NSTimer scheduledTimerWithTimeInterval:1.0 / 120 repeats:YES block:^(NSTimer *timer) {
+    ACPiPController *strongSelf = weakSelf;
+    NSWindow *window = strongSelf.window;
+    if (!strongSelf || !window.visible) {
+      [timer invalidate];
+      if (strongSelf) strongSelf->_animating = NO;
+      return;
+    }
+    const double t = CACurrentMediaTime() - start;
+    const auto x = ardiacore_pip_throw::SpringAt(NSMinX(from) - NSMinX(target), velocity.x, t);
+    const auto y = ardiacore_pip_throw::SpringAt(NSMinY(from) - NSMinY(target), velocity.y, t);
+    const BOOL done = ardiacore_pip_throw::Resolved(x, y);
+    const NSPoint origin = done ? target.origin : NSMakePoint(round(NSMinX(target) + x.offset), round(NSMinY(target) + y.offset));
+    if (!NSEqualPoints(origin, window.frame.origin)) {
+      [window setFrameOrigin:origin];
+      if (trace.count < 1200) [trace addObject:@[ @(round(t * 10000) / 10000), @(origin.x), @(origin.y) ]];
+    }
+    if (!done) return;
+    [timer invalidate];
+    strongSelf->_animating = NO;
+    record[@"settledAfter"] = @(t);
+    [strongSelf rescueIfLost];
+  }];
+  [NSRunLoop.currentRunLoop addTimer:_slide forMode:NSRunLoopCommonModes];
+}
+
+- (void)dragReleasedAt:(NSPoint)pointer velocity:(NSPoint)velocity {
+  const BOOL reduceMotion = NSWorkspace.sharedWorkspace.accessibilityDisplayShouldReduceMotion;
+  const BOOL flings = ThrowEnabled() && !reduceMotion && ardiacore_pip_throw::DragFlings({velocity.x, velocity.y}) &&
+                      [self edgeBeyond] == ACPiPEdgeNone;
+  const BOOL thrown = flings && [self throwFrom:pointer velocity:velocity];
+  _lastRelease = @{
+    @"pointer" : NSStringFromPoint(pointer),
+    @"velocity" : NSStringFromPoint(velocity),
+    @"flings" : @(flings),
+    @"thrown" : @(thrown),
+    @"frame" : NSStringFromRect(_window.frame),
+  };
+  if (!thrown) [self rescueIfLost];
+}
+
+- (void)swipeBegan:(NSEvent *)event {
+  [self stopMotion];
+  [NSObject cancelPreviousPerformRequestsWithTarget:self selector:@selector(settle) object:nil];
+  _swiping = YES;
+  _swipeStart = _window.frame;
+  _swipeHome = [self gestureHome];
+  const NSPoint pointer = PointerOf(event);
+  _swipeGrab = NSMakePoint(MIN(MAX(pointer.x - NSMinX(_swipeStart), 0), NSWidth(_swipeStart)),
+                           MIN(MAX(pointer.y - NSMinY(_swipeStart), 0), NSHeight(_swipeStart)));
+  _swipePointer = NSEvent.mouseLocation;
+  _swipeBeganAt = CACurrentMediaTime();
+  _swipeLastDelta = NSZeroPoint;
+  if (!ardiacore_host::Background()) [NSCursor setHiddenUntilMouseMoves:YES];
+  [self swipeMoved:event];
+}
+
+- (void)moveBy:(ardiacore_pip_throw::Point)delta {
+  if (delta.x == 0 && delta.y == 0) return;
+  const auto screens = ThrowScreens();
+  const auto next =
+      ardiacore_pip_throw::SwipeStep(ThrowRect(_window.frame), delta, screens.data(), (int)screens.size(), ScreenIndex(_swipeHome));
+  const NSPoint origin = NSMakePoint(next.x, next.y);
+  if (!NSEqualPoints(origin, _window.frame.origin)) [_window setFrameOrigin:origin];
+}
+
+- (void)abandonSwipe {
+  if (!_swiping) return;
+  _swiping = NO;
+  if (!ardiacore_host::Background()) [NSCursor setHiddenUntilMouseMoves:NO];
+}
+
+- (void)swipeMoved:(NSEvent *)event {
+  const auto delta = ardiacore_pip_throw::FingerDelta(event.scrollingDeltaX, event.scrollingDeltaY, event.isDirectionInvertedFromDevice);
+  _swipeLastDelta = NSMakePoint(delta.x, delta.y);
+  _swipeLastAt = NSProcessInfo.processInfo.systemUptime;
+  [self moveBy:delta];
+}
+
+- (void)swipeEnded:(NSEvent *)event cancelled:(BOOL)cancelled {
+  [self moveBy:ardiacore_pip_throw::FingerDelta(event.scrollingDeltaX, event.scrollingDeltaY, event.isDirectionInvertedFromDevice)];
+  _swiping = NO;
+  const NSPoint last = _swipeLastDelta;
+  const BOOL fresh = NSProcessInfo.processInfo.systemUptime - _swipeLastAt <= ardiacore_pip_throw::kVelocityWindow;
+  const BOOL flings = !cancelled && fresh && !NSWorkspace.sharedWorkspace.accessibilityDisplayShouldReduceMotion &&
+                      ardiacore_pip_throw::SwipeFlings({last.x, last.y});
+  const NSRect frame = _window.frame;
+  const NSPoint grab = NSMakePoint(NSMinX(frame) + _swipeGrab.x, NSMinY(frame) + _swipeGrab.y);
+  const ACPiPEdge edge = [self edgeBeyond];
+  BOOL thrown = NO;
+  NSRect destination = frame;
+  if (edge != ACPiPEdgeNone) {
+    destination = [self frameStashedAt:edge];
+    [self stashAt:edge];
+  } else {
+    if (_stashedEdge != ACPiPEdgeNone) [self setStashedEdge:ACPiPEdgeNone];
+    const auto velocity = ardiacore_pip_throw::SwipeVelocity({last.x, last.y});
+    thrown = flings && [self throwFrom:grab velocity:NSMakePoint(velocity.x, velocity.y)];
+    if (thrown) destination = NSRectFromString(_lastThrow[@"target"]);
+  }
+  const NSPoint landing = NSMakePoint(NSMinX(destination) + _swipeGrab.x, NSMinY(destination) + _swipeGrab.y);
+  const BOOL unmoved = NSEqualPoints(NSEvent.mouseLocation, _swipePointer);
+  const BOOL warp = edge == ACPiPEdgeNone && unmoved && (!thrown || CACurrentMediaTime() - _swipeBeganAt >= 0.15);
+  if (!ardiacore_host::Background()) {
+    if (warp) {
+      CGWarpMouseCursorPosition(CGPointMake(landing.x, NSMaxY(NSScreen.screens.firstObject.frame) - landing.y));
+      [NSCursor setHiddenUntilMouseMoves:YES];
+    } else {
+      [NSCursor setHiddenUntilMouseMoves:NO];
+    }
+  }
+  _lastSwipe = @{
+    @"start" : NSStringFromRect(_swipeStart),
+    @"released" : NSStringFromRect(frame),
+    @"lastDelta" : NSStringFromPoint(last),
+    @"fresh" : @(fresh),
+    @"cancelled" : @(cancelled),
+    @"flings" : @(flings),
+    @"thrown" : @(thrown),
+    @"stashed" : @(edge),
+    @"warp" : warp ? NSStringFromPoint(landing) : @"",
+  };
+  [self rescueIfLost];
+}
+
+- (NSDictionary *)throwInfo {
+  return @{@"lastThrow" : _lastThrow ?: @{}, @"lastSwipe" : _lastSwipe ?: @{}, @"lastRelease" : _lastRelease ?: @{}, @"swiping" : @(_swiping)};
+}
+
+static __weak NSWindow *gSwipeWindow;
+static __weak NSWindow *gSwipeMomentum;
+
++ (void)abandonSwipeOn:(NSWindow *)window {
+  if (!window) return;
+  if (gSwipeWindow == window) gSwipeWindow = nil;
+  [[self forWindow:window] abandonSwipe];
+}
+
++ (ACPiPController *)swipeTargetFor:(NSEvent *)event {
+  NSWindow *window = event.window;
+  if (!window) {
+    const NSPoint point = PointerOf(event);
+    for (NSWindow *candidate in NSApp.orderedWindows)
+      if (candidate.visible && NSPointInRect(point, candidate.frame)) {
+        window = candidate;
+        break;
+      }
+  }
+  ACPiPController *controller = window ? [self forWindow:window] : nil;
+  return controller && window.visible ? controller : nil;
+}
+
++ (BOOL)handleSwipe:(NSEvent *)event {
+  if (event.type != NSEventTypeScrollWheel) return NO;
+  const NSEventPhase phase = event.phase, momentum = event.momentumPhase;
+  if (momentum != NSEventPhaseNone) {
+    const BOOL ours = gSwipeMomentum != nil;
+    if (momentum & (NSEventPhaseEnded | NSEventPhaseCancelled)) gSwipeMomentum = nil;
+    return ours;
+  }
+  if (phase == NSEventPhaseNone) return NO;
+  if (phase & (NSEventPhaseBegan | NSEventPhaseMayBegin)) {
+    gSwipeMomentum = nil;
+    [self abandonSwipeOn:gSwipeWindow];
+    if (phase != NSEventPhaseBegan || !ThrowEnabled() || !event.hasPreciseScrollingDeltas ||
+        (event.modifierFlags & NSEventModifierFlagCommand))
+      return NO;
+    ACPiPController *controller = [self swipeTargetFor:event];
+    if (!controller) return NO;
+    gSwipeWindow = controller.window;
+    [controller swipeBegan:event];
+    return YES;
+  }
+  NSWindow *window = gSwipeWindow;
+  ACPiPController *controller = window ? [self forWindow:window] : nil;
+  if (!controller) return NO;
+  if (phase & (NSEventPhaseEnded | NSEventPhaseCancelled)) {
+    gSwipeWindow = nil;
+    gSwipeMomentum = window;
+    [controller swipeEnded:event cancelled:(phase & NSEventPhaseCancelled) != 0];
+  } else {
+    [controller swipeMoved:event];
+  }
+  return YES;
+}
+
+- (void)devSwipe:(NSArray<NSString *> *)args {
+  const double fx = args.count > 0 ? args[0].doubleValue : 0, fy = args.count > 1 ? args[1].doubleValue : 0;
+  const int steps = MAX(1, args.count > 2 ? args[2].intValue : 10);
+  NSString *mode = args.count > 3 ? args[3] : @"trackpad";
+  const BOOL wheel = [mode isEqual:@"wheel"], command = [mode isEqual:@"command"];
+  const double pause = [mode isEqual:@"pause"] ? 0.3 : 0;
+  NSWindow *window = _window;
+  NSEvent * (^make)(CGScrollPhase, CGMomentumScrollPhase, double, double) =
+      ^NSEvent *(CGScrollPhase phase, CGMomentumScrollPhase momentum, double fdx, double fdy) {
+        CGEventRef cg = CGEventCreateScrollWheelEvent2(nullptr, kCGScrollEventUnitPixel, 2, 0, 0, 0);
+        const NSRect f = window.frame;
+        CGEventSetLocation(cg, CGPointMake(NSMidX(f), NSMaxY(NSScreen.screens.firstObject.frame) - NSMidY(f)));
+        CGEventSetIntegerValueField(cg, kCGScrollWheelEventIsContinuous, wheel ? 0 : 1);
+        CGEventSetIntegerValueField(cg, kCGScrollWheelEventScrollPhase, wheel ? 0 : phase);
+        CGEventSetIntegerValueField(cg, kCGScrollWheelEventMomentumPhase, momentum);
+        CGEventSetFlags(cg, command ? kCGEventFlagMaskCommand : 0);
+        const BOOL inverted = [NSEvent eventWithCGEvent:cg].isDirectionInvertedFromDevice;
+        const double sdx = inverted ? fdx : -fdx, sdy = inverted ? -fdy : fdy;
+        if (wheel) {
+          CGEventSetIntegerValueField(cg, kCGScrollWheelEventDeltaAxis1, lround(sdy / 10));
+          CGEventSetIntegerValueField(cg, kCGScrollWheelEventDeltaAxis2, lround(sdx / 10));
+        } else {
+          CGEventSetIntegerValueField(cg, kCGScrollWheelEventPointDeltaAxis1, lround(sdy));
+          CGEventSetIntegerValueField(cg, kCGScrollWheelEventPointDeltaAxis2, lround(sdx));
+          CGEventSetDoubleValueField(cg, kCGScrollWheelEventFixedPtDeltaAxis1, sdy);
+          CGEventSetDoubleValueField(cg, kCGScrollWheelEventFixedPtDeltaAxis2, sdx);
+        }
+        NSEvent *event = [NSEvent eventWithCGEvent:cg];
+        CFRelease(cg);
+        return event;
+      };
+  auto post = [=](double seconds, CGScrollPhase phase, CGMomentumScrollPhase momentum, double fdx, double fdy) {
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(seconds * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+      [NSApp postEvent:make(phase, momentum, fdx, fdy) atStart:NO];
+    });
+  };
+  const double interval = 1.0 / 120;
+  post(0, kCGScrollPhaseBegan, kCGMomentumScrollPhaseNone, 0, 0);
+  for (int i = 1; i <= steps; i++) post(i * interval, kCGScrollPhaseChanged, kCGMomentumScrollPhaseNone, fx / steps, fy / steps);
+  const double end = (steps + 1) * interval + pause;
+  post(end, kCGScrollPhaseEnded, kCGMomentumScrollPhaseNone, 0, 0);
+  if ([mode isEqual:@"momentum"]) {
+    post(end + interval, (CGScrollPhase)0, kCGMomentumScrollPhaseBegin, fx / steps, fy / steps);
+    for (int i = 2; i <= 6; i++) post(end + i * interval, (CGScrollPhase)0, kCGMomentumScrollPhaseContinue, fx / steps / i, fy / steps / i);
+    post(end + 7 * interval, (CGScrollPhase)0, kCGMomentumScrollPhaseEnd, 0, 0);
+  }
+}
+
+- (void)devDrag:(NSArray<NSString *> *)args {
+  const double fx = args.count > 0 ? args[0].doubleValue : 0, fy = args.count > 1 ? args[1].doubleValue : 0;
+  const int steps = MAX(1, args.count > 2 ? args[2].intValue : 10);
+  const double interval = (args.count > 3 ? args[3].doubleValue : 8) / 1000, pause = (args.count > 4 ? args[4].doubleValue : 0) / 1000;
+  NSWindow *window = _window;
+  const NSRect frame = window.frame;
+  const NSPoint grab = NSMakePoint(NSWidth(frame) * 0.5, NSHeight(frame) * 0.3);
+  const NSPoint start = NSMakePoint(NSMinX(frame) + grab.x, NSMinY(frame) + grab.y);
+  auto post = [=](double seconds, NSEventType type, NSPoint screen) {
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(seconds * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+      const NSPoint local = NSMakePoint(screen.x - NSMinX(window.frame), screen.y - NSMinY(window.frame));
+      [NSApp postEvent:[NSEvent mouseEventWithType:type location:local modifierFlags:0 timestamp:NSProcessInfo.processInfo.systemUptime
+                                      windowNumber:window.windowNumber context:nil eventNumber:0 clickCount:1
+                                          pressure:type == NSEventTypeLeftMouseUp ? 0 : 1]
+               atStart:NO];
+    });
+  };
+  post(0, NSEventTypeLeftMouseDown, start);
+  for (int i = 1; i <= steps; i++)
+    post(i * interval, NSEventTypeLeftMouseDragged, NSMakePoint(start.x + fx * i / steps, start.y + fy * i / steps));
+  post(steps * interval + pause + 0.004, NSEventTypeLeftMouseUp, NSMakePoint(start.x + fx, start.y + fy));
 }
 
 - (NSString *)snapshot:(NSString *)name {
@@ -725,6 +1108,7 @@ static __weak NSWindow *gZoomGesture;
 
 - (void)zoomBy:(double)factor at:(NSPoint)pointer ease:(BOOL)ease {
   NSWindow *window = _window;
+  [[ACPiPController forWindow:window] stopMotion];
   NSRect frame = window.frame;
   if (!NSEqualRects(frame, _last) || _width <= 0) {
     double aspect = NSWidth(frame) / MAX(NSHeight(frame), 1);
@@ -821,7 +1205,15 @@ BOOL GrabsWindowBackground(NSWindow *window, NSEvent *event) {
 }
 
 __weak NSWindow *gDragged;
-NSPoint gGrab;
+NSPoint gLastMouse;
+NSPoint gGrabLocal;
+__weak NSScreen *gDragHome;
+std::vector<ardiacore_pip_throw::Sample> gDragSamples;
+
+void SampleDrag(NSEvent *event, NSPoint mouse) {
+  if (gDragSamples.size() >= 64) gDragSamples.erase(gDragSamples.begin(), gDragSamples.begin() + 32);
+  gDragSamples.push_back({event.timestamp, mouse.x, mouse.y});
+}
 
 void InstallDragMonitor() {
   static id monitor;
@@ -833,21 +1225,36 @@ void InstallDragMonitor() {
                                        NSWindow *window = event.window;
                                        gDragged = GrabsWindowBackground(window, event) ? window : nil;
                                        if (!gDragged) return event;
+                                       [ACPiPController abandonSwipeOn:window];
+                                       [[ACPiPController forWindow:window] stopMotion];
                                        NSPoint mouse = ScreenLocation(event);
-                                       gGrab = NSMakePoint(mouse.x - NSMinX(window.frame), mouse.y - NSMinY(window.frame));
+                                       gLastMouse = mouse;
+                                       gGrabLocal = NSMakePoint(mouse.x - NSMinX(window.frame), mouse.y - NSMinY(window.frame));
+                                       gDragHome = [[ACPiPController forWindow:window] gestureHome];
+                                       gDragSamples.clear();
+                                       SampleDrag(event, mouse);
                                        return nil;
                                      }
                                      NSWindow *window = gDragged;
                                      if (!window) return event;
                                      if (event.type == NSEventTypeLeftMouseUp) {
                                        gDragged = nil;
+                                       const NSPoint grabbed = NSMakePoint(NSMinX(window.frame) + gGrabLocal.x, NSMinY(window.frame) + gGrabLocal.y);
+                                       const auto velocity = ardiacore_pip_throw::ReleaseVelocity(
+                                           gDragSamples.data(), (int)gDragSamples.size(), event.timestamp);
+                                       gDragSamples.clear();
+                                       [[ACPiPController forWindow:window] dragReleasedAt:grabbed
+                                                                                 velocity:NSMakePoint(velocity.x, velocity.y)];
                                        return nil;
                                      }
                                      NSPoint mouse = ScreenLocation(event);
-                                     NSRect frame = window.frame;
-                                     frame.origin = NSMakePoint(mouse.x - gGrab.x, mouse.y - gGrab.y);
-                                     frame.origin.y = MIN(NSMinY(frame), NSMaxY(ScreenFor(frame).visibleFrame) - NSHeight(frame));
-                                     [window setFrameOrigin:frame.origin];
+                                     SampleDrag(event, mouse);
+                                     const auto screens = ThrowScreens();
+                                     const auto next = ardiacore_pip_throw::DragStep(
+                                         ThrowRect(window.frame), {mouse.x - gLastMouse.x, mouse.y - gLastMouse.y}, screens.data(),
+                                         (int)screens.size(), ScreenIndex(gDragHome));
+                                     gLastMouse = mouse;
+                                     [window setFrameOrigin:NSMakePoint(next.x, next.y)];
                                      return nil;
                                    }];
 }
@@ -857,7 +1264,7 @@ void InstallZoomMonitor() {
   if (monitor) return;
   monitor = [NSEvent addLocalMonitorForEventsMatchingMask:NSEventMaskScrollWheel | NSEventMaskMagnify
                                                   handler:^NSEvent *(NSEvent *event) {
-                                                    return [ACPiPZoom handle:event] ? nil : event;
+                                                    return [ACPiPController handleSwipe:event] || [ACPiPZoom handle:event] ? nil : event;
                                                   }];
 }
 
@@ -963,6 +1370,12 @@ void VideoChanged(ArdiaCoreWebView *view, NSString *host, NSString *frameId, boo
   else if ([action isEqual:@"menu"]) return [[controller.menu.itemArray valueForKey:@"title"] componentsJoinedByString:@"|"];
   else if ([action hasPrefix:@"snapshot:"]) return [controller snapshot:[action substringFromIndex:9]];
   else if ([action hasPrefix:@"frame:"]) [controller.window setFrame:NSRectFromString([action substringFromIndex:6]) display:YES];
+  else if ([action hasPrefix:@"swipe:"]) [controller devSwipe:[[action substringFromIndex:6] componentsSeparatedByString:@","]];
+  else if ([action hasPrefix:@"drag:"]) [controller devDrag:[[action substringFromIndex:5] componentsSeparatedByString:@","]];
+  else if ([action isEqual:@"throw"]) {
+    NSData *json = [NSJSONSerialization dataWithJSONObject:[controller throwInfo] options:0 error:nil];
+    return json ? [[NSString alloc] initWithData:json encoding:NSUTF8StringEncoding] : @"";
+  }
   else return @"";
   return @"started";
 }

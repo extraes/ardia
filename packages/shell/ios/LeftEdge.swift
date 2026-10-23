@@ -60,16 +60,26 @@ final class LeftEdgeWatcher {
     guard point.y >= frame.minY, point.y < frame.maxY else { return false }
     if point.x >= frame.minX, point.x < frame.minX + hold {
       guard live else { return true }
-      let hit = NSApp.window(withWindowNumber: NSWindow.windowNumber(at: point, belowWindowWithWindowNumber: 0))
+      let hit = NSApp.window(withWindowNumber: Self.windowNumber(at: point))
       return hit === window || hit?.parent === window
     }
     guard point.x < frame.minX, point.x >= max(screen.frame.minX, frame.minX - Self.reach) else { return false }
     guard live else { return true }
     let edge = NSPoint(x: frame.minX + 1, y: point.y)
-    guard NSWindow.windowNumber(at: edge, belowWindowWithWindowNumber: 0) == window.windowNumber else { return false }
-    let under = NSWindow.windowNumber(at: point, belowWindowWithWindowNumber: 0)
+    guard Self.windowNumber(at: edge) == window.windowNumber else { return false }
+    let under = Self.windowNumber(at: point)
     if under != window.windowNumber, NSApp.window(withWindowNumber: under) != nil { return false }
     return NSApp.isActive || Self.besideScreenEdge(window, screen)
+  }
+
+  private static func windowNumber(at point: NSPoint) -> Int {
+    var number = NSWindow.windowNumber(at: point, belowWindowWithWindowNumber: 0)
+    while let passThrough = NSApp.window(withWindowNumber: number), passThrough.ignoresMouseEvents {
+      let below = NSWindow.windowNumber(at: point, belowWindowWithWindowNumber: number)
+      guard below != number else { break }
+      number = below
+    }
+    return number
   }
 
   private static func besideScreenEdge(_ window: NSWindow, _ screen: NSScreen) -> Bool {

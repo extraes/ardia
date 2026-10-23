@@ -27,6 +27,9 @@ import subprocess
 import sys
 import tempfile
 
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "build"))
+import pathguard  # noqa: E402
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.abspath(os.path.join(HERE, "..", ".."))
 SRC = os.environ.get("CHROMIUM_SRC", os.path.expanduser("~/chromium-build/chromium_git/chromium/src"))
@@ -184,7 +187,9 @@ def copy_path(src_root, dst_root, path, is_dir, missing_ok=True):
             return
         sys.exit(f"missing {src}")
     os.makedirs(os.path.dirname(dst), exist_ok=True)
-    shutil.copy2(src, dst)
+    if os.path.lexists(dst):
+        os.unlink(dst)
+    shutil.copy2(src, dst, follow_symlinks=False)
 
 
 def base_from_git(path, out):
@@ -194,6 +199,8 @@ def base_from_git(path, out):
     if p.returncode:
         return False
     os.makedirs(os.path.dirname(os.path.join(out, path)), exist_ok=True)
+    if os.path.lexists(os.path.join(out, path)):
+        os.unlink(os.path.join(out, path))
     open(os.path.join(out, path), "wb").write(p.stdout)
     return True
 
@@ -220,7 +227,7 @@ def cmd_apply(args):
             sys.exit(f"error: {step} does not apply:\n{error}")
         print(f"applied {step}")
     # The offline page chromium-neterror-game.patch names is generated, not patched in.
-    run([os.path.join(HERE, "build", "game-resource.sh")], HERE, check=True)
+    run([os.path.join(HERE, "build", "game-resource.sh"), "--apply"], HERE, env=dict(os.environ, CHROMIUM_SRC=SRC), check=True)
 
 
 def cmd_capture_base(args):
@@ -311,6 +318,51 @@ def tree_differs(cmp):
     return any(tree_differs(sub) for sub in cmp.subdirs.values())
 
 
+def holds_lock_for(path):
+    if pathguard.reaches(path):
+        return pathguard.real_lock_held()
+    return pathguard.chromium_lock_held()
+
+
+def real_chromium_build():
+    return pathguard.real_chromium_build()
+
+
+def live_tree():
+    return os.path.realpath(os.path.join(real_chromium_build(), "chromium_git/chromium/src"))
+
+
+def written_rels():
+    return [path for path, _ in touched(read_series())]
+
+
+def guard_writes(args):
+    if args.command == "apply":
+        pathguard.require_tree_writable(SRC, written_rels(), "series.py apply")
+    elif args.command == "capture-base":
+        pathguard.require_tree_writable(BASE, written_rels(), "series.py capture-base")
+    elif args.command == "check" and args.keep:
+        if os.path.lexists(args.keep) and os.listdir(args.keep):
+            sys.exit(f"series.py: --keep {args.keep} isn't empty: give it a new directory")
+        for tree in (SRC, BASE):
+            if pathguard.overlaps(args.keep, tree):
+                sys.exit(f"series.py: {args.keep} overlaps {tree}: write the scratch copy somewhere else")
+        pathguard.require_scratch_destination(args.keep, "series.py check --keep")
+    elif args.command == "materialize":
+        if os.path.lexists(args.dir) and os.listdir(args.dir):
+            sys.exit(f"series.py: {args.dir} isn't empty: give materialize a new directory")
+        for tree in (SRC, BASE):
+            if pathguard.overlaps(args.dir, tree):
+                sys.exit(f"series.py: {args.dir} overlaps {tree}: write the scratch copy somewhere else")
+        pathguard.require_scratch_destination(args.dir, "series.py materialize")
+
+
+def refuse_live_base_for_scratch_tree():
+    if os.path.realpath(SRC) != live_tree() and "AC_SERIES_BASE" not in os.environ:
+        sys.exit(f"CHROMIUM_SRC is {SRC}, not the live tree: set AC_SERIES_BASE too, so its base isn't "
+                 f"~/chromium-build/series-base")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = parser.add_subparsers(dest="command", required=True)
@@ -327,6 +379,9 @@ def main():
     p.add_argument("dir")
     sub.add_parser("files")
     args = parser.parse_args()
+    if args.command in ("check", "capture-base", "materialize"):
+        refuse_live_base_for_scratch_tree()
+    guard_writes(args)
     handler = {"apply": cmd_apply, "check": cmd_check, "capture-base": cmd_capture_base,
                "materialize": cmd_materialize, "files": cmd_files}[args.command]
     sys.exit(handler(args) or 0)

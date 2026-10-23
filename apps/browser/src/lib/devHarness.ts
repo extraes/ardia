@@ -58,6 +58,9 @@ export function startDevHarness() {
     get themes(): typeof import("../components/import/apply") & typeof import("../components/settings/ThemeEditor") {
       return { ...require("../components/import/apply"), ...require("../components/settings/ThemeEditor") };
     },
+    get bangs(): typeof import("../components/omnibox/bangs") {
+      return require("../components/omnibox/bangs");
+    },
     get switcher(): typeof import("../components/sidebar/switcher") {
       return require("../components/sidebar/switcher");
     },
@@ -94,7 +97,14 @@ export function startDevHarness() {
     const id = scriptId(source);
     if (!source || !id || id === lastId) return;
     lastId = id;
-    const done = (body: object) => writeDocument("dev-eval-result.json", JSON.stringify({ id, ...body }));
+    const evalLog = ((globalThis as { __devEvalLog?: string[] }).__devEvalLog ??= []);
+    const took = Date.now();
+    evalLog.push(`${id} taken ${took}`);
+    if (evalLog.length > 12) evalLog.shift();
+    const done = (body: object) => {
+      evalLog.push(`${id} settled +${Date.now() - took} ms`);
+      writeDocument("dev-eval-result.json", JSON.stringify({ id, ...body }));
+    };
     try {
       const fn = new Function("ac", source) as (n: typeof ac) => unknown;
       Promise.resolve(fn(ac)).then(

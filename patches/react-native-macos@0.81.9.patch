@@ -230,6 +230,114 @@ index 6f332dc1701cada0aff0e9a2678fa7bdcea0ef85..462853ec8b76f004cd5b9e92291473bc
  @end
  
  #endif // TARGET_OS_OSX
+diff --git a/React/Base/RCTTouchHandler.m b/React/Base/RCTTouchHandler.m
+index b85ee3dd203f88bf2daaa47e912031ea200ff910..c252cfa97deb7b7cc0533105f604fa50985e144b 100644
+--- a/React/Base/RCTTouchHandler.m
++++ b/React/Base/RCTTouchHandler.m
+@@ -100,6 +100,36 @@ - (void)detachFromView:(RCTPlatformView *)view // [macOS]
+ 
+ #pragma mark - Bookkeeping for touch indices
+ 
++#if TARGET_OS_OSX // [Ardia: a mouse down and its drags and up share an event number, but each button counts on its own and synthesized events all carry 0, so a match also needs the same button and an index not matched yet; two touches mapped to one index sent JS a null touch (getTouchIdentifier, a fatal error)
++static NSInteger ArdiaMouseButton(NSEvent *event)
++{
++  switch (event.type) {
++    case NSEventTypeLeftMouseDown:
++    case NSEventTypeLeftMouseUp:
++    case NSEventTypeLeftMouseDragged:
++      return 0;
++    case NSEventTypeRightMouseDown:
++    case NSEventTypeRightMouseUp:
++    case NSEventTypeRightMouseDragged:
++      return 1;
++    default:
++      return event.buttonNumber;
++  }
++}
++
++- (NSInteger)ardia_indexOfNativeTouch:(NSEvent *)touch excluding:(NSIndexSet *)taken
++{
++  NSUInteger same = [_nativeTouches indexOfObject:touch];
++  if (same != NSNotFound && ![taken containsIndex:same]) {
++    return same;
++  }
++  NSInteger button = ArdiaMouseButton(touch);
++  return [_nativeTouches indexOfObjectPassingTest:^BOOL(NSEvent *event, NSUInteger idx, __unused BOOL *stop) {
++    return ![taken containsIndex:idx] && touch.eventNumber == event.eventNumber && ArdiaMouseButton(event) == button;
++  }];
++}
++#endif // Ardia]
++
+ - (void)_recordNewTouches:(NSSet *)touches
+ {
+ #if !TARGET_OS_OSX // [macOS]
+@@ -108,7 +138,13 @@ - (void)_recordNewTouches:(NSSet *)touches
+   for (NSEvent *touch in touches) {
+ #endif // macOS]
+ 
++#if !TARGET_OS_OSX // [Ardia: AppKit can hand the same mouse down over twice; recording it again put a second React touch behind one native touch
+     RCTAssert(![_nativeTouches containsObject:touch], @"Touch is already recorded. This is a critical bug.");
++#else
++    if ([_nativeTouches containsObject:touch]) {
++      continue;
++    }
++#endif // Ardia]
+ 
+     // Find closest React-managed touchable view
+     
+@@ -204,19 +240,27 @@ - (void)_recordRemovedTouches:(NSSet *)touches
+   for (UITouch *touch in touches) {
+     NSInteger index = [_nativeTouches indexOfObject:touch];
+ #else // [macOS
+-    for (NSEvent *touch in touches) {
+-      NSInteger index = [_nativeTouches indexOfObjectPassingTest:^BOOL(NSEvent *event, __unused NSUInteger idx, __unused BOOL *stop) {
+-        return touch.eventNumber == event.eventNumber;
+-      }];
++  NSMutableIndexSet *removed = [NSMutableIndexSet new]; // [Ardia]
++  for (NSEvent *touch in touches) {
++    NSInteger index = [self ardia_indexOfNativeTouch:touch excluding:removed]; // [Ardia]
+ #endif // macOS]
+     if (index == NSNotFound) {
+       continue;
+     }
+ 
++#if !TARGET_OS_OSX // [Ardia]
+     [_touchViews removeObjectAtIndex:index];
+     [_nativeTouches removeObjectAtIndex:index];
+     [_reactTouches removeObjectAtIndex:index];
++#else
++    [removed addIndex:index];
++#endif // Ardia]
+   }
++#if TARGET_OS_OSX // [Ardia]
++  [_touchViews removeObjectsAtIndexes:removed];
++  [_nativeTouches removeObjectsAtIndexes:removed];
++  [_reactTouches removeObjectsAtIndexes:removed];
++#endif // Ardia]
+ }
+ 
+ - (void)_updateReactTouchAtIndex:(NSInteger)touchIndex
+@@ -303,15 +347,17 @@ - (void)_updateAndDispatchTouches:(NSSet<NSEvent *> *)touches eventName:(NSStrin
+   for (UITouch *touch in touches) {
+     NSInteger index = [_nativeTouches indexOfObject:touch];
+ #else // [macOS
++  NSMutableIndexSet *taken = [NSMutableIndexSet new]; // [Ardia]
+   for (NSEvent *touch in touches) {
+-    NSInteger index = [_nativeTouches indexOfObjectPassingTest:^BOOL(NSEvent *event, __unused NSUInteger idx, __unused BOOL *stop) {
+-      return touch.eventNumber == event.eventNumber;
+-    }];
++    NSInteger index = [self ardia_indexOfNativeTouch:touch excluding:taken]; // [Ardia]
+ #endif // macOS]
+     
+     if (index == NSNotFound) {
+       continue;
+     }
++#if TARGET_OS_OSX // [Ardia]
++    [taken addIndex:index];
++#endif // Ardia]
+     
+ #if TARGET_OS_OSX // [macOS
+     _nativeTouches[index] = touch;
 diff --git a/React/Base/macOS/RCTUIKit.m b/React/Base/macOS/RCTUIKit.m
 index a37a1c106a04752c1baeb6dd2170402ce5f34f71..be88b42f1cd4bc0521055d97eb948c28e012c402 100644
 --- a/React/Base/macOS/RCTUIKit.m

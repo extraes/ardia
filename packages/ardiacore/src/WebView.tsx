@@ -1,7 +1,7 @@
 import { toAppUrl, toEngineUrl } from "@ardia/core";
 import { requireNativeViewManager } from "expo-modules-core";
 import { forwardRef, useImperativeHandle, useRef } from "react";
-import type { NativeSyntheticEvent, ViewProps } from "react-native";
+import { findNodeHandle, type NativeSyntheticEvent, type ViewProps } from "react-native";
 import type { ExternalAppRequest } from "./externalApps";
 import type { FaviconImage } from "./favicons";
 
@@ -149,6 +149,7 @@ export type WebViewProps = ViewProps & {
   warm?: boolean;
   neighbour?: boolean;
   pageBackgroundColor?: string;
+  contentsBackgroundColor?: string;
   pageColor?: string;
   shownUrl?: string;
   autoPictureInPicture?: boolean;
@@ -189,6 +190,7 @@ export type WebViewProps = ViewProps & {
 };
 
 export type WebViewHandle = {
+  nativeTag(): number | null;
   loadUrl(url: string, options?: { userInitiated?: boolean }): Promise<void>;
   goBack(): Promise<void>;
   goForward(): Promise<void>;
@@ -313,7 +315,7 @@ const unwrap: { [K in Handlers]: (e: NativeEvents[K]) => Parameters<NonNullable<
 
 type NativeHandle = Omit<
   WebViewHandle,
-  "evaluate" | "loadUrl" | "downloadFavicon" | "resolvePasswordPrompt" | "discard"
+  "evaluate" | "loadUrl" | "downloadFavicon" | "resolvePasswordPrompt" | "discard" | "nativeTag"
 > & {
   evaluate(code: string): Promise<string | null>;
   downloadFavicon(url: string): Promise<FaviconImage | null>;
@@ -346,6 +348,7 @@ export const WebView = forwardRef<WebViewHandle, WebViewProps>(function WebView(
       }
     };
     return {
+      nativeTag: () => findNodeHandle(native.current as Parameters<typeof findNodeHandle>[0]),
       loadUrl: (url, options) =>
         call(undefined, (n) => n.loadUrl(toEngineUrl(url), options?.userInitiated ?? false)),
       goBack: () => call(undefined, (n) => n.goBack()),

@@ -378,6 +378,7 @@ static void StartEarlyWindow() {
   ardiacore_host::LoadContentBlocker(@"");
   [ArdiaCoreWebView installScrollZoom];
   [ArdiaCoreWebView installSwitchPrewarm];
+  [ArdiaCoreWebView installOutgoingFocusSnapshots];
   [ArdiaCoreServices watchDownloads:@""];
 
   NSBundle *bundle = [NSBundle bundleForClass:ArdiaCoreHostEngineDelegate.class];
@@ -627,7 +628,8 @@ static void StartEarlyWindow() {
       "--enable-smooth-scrolling",
       "--disable-stack-profiler",
       std::string("--disable-features=MacAppCodeSignClone,DevToolsAcceptDebuggingConnections") +
-          (biometricsCheckPerTab ? "" : ",AutofillAiWalletPrivatePasses"),
+          (biometricsCheckPerTab ? "" : ",AutofillAiWalletPrivatePasses") +
+          (freezeLeastRecentTabs ? "" : ",InfiniteTabsFreezing"),
       std::string("--enable-features=WebContentsDiscard,ImprovedStartupBestEffortDelay:StartupDelayStopOnLoadingTimedOut/true,"
                   "CPUMeasurementInFreezingPolicy:freezing_visible_protection_time/0s") +
           (freezeLeastRecentTabs ? (thawFrozenTabsRarely ? ",InfiniteTabsFreezing:ardia_unconnected_unfreeze_interval/600s" : ",InfiniteTabsFreezing") : "") + (throttleMainFramesTo60Hz ? (fullRateAfterInput ? ",ThrottleMainFrameTo60Hz,UrgentMainFrameForInput" : ",ThrottleMainFrameTo60Hz:ardia_full_rate_after_input/0s,UrgentMainFrameForInput") : ""),
@@ -799,10 +801,6 @@ static void StartEarlyWindow() {
 
 + (NSArray<NSDictionary *> *)testExternalLaunches {
   return ArdiaCoreEngine.testExternalLaunches ?: @[];
-}
-
-+ (BOOL)devReservedGlobalShortcut:(NSString *)shortcut {
-  return [ArdiaCoreEngine respondsToSelector:@selector(isReservedGlobalShortcut:)] && [ArdiaCoreEngine isReservedGlobalShortcut:shortcut];
 }
 
 + (BOOL)devShowBluetoothChooser:(int)browserId unauthorized:(BOOL)unauthorized {

@@ -33,9 +33,6 @@ public class CefModule: Module {
     AsyncFunction("devPictureInPicture") { ArdiaCoreWebView.devPictureInPicture() }.runOnQueue(.main)
     AsyncFunction("devPictureInPictureAction") { (action: String) in ArdiaCoreWebView.devPictureInPictureAction(action) }.runOnQueue(.main)
     AsyncFunction("devFocusPage") { (browserId: Int) in ArdiaCoreWebView.devFocusPage(browserId: Int32(browserId)) }.runOnQueue(.main)
-    AsyncFunction("devReservedGlobalShortcut") { (shortcut: String) -> Bool in
-      ArdiaCoreHost.devReservedGlobalShortcut(shortcut)
-    }.runOnQueue(.main)
     AsyncFunction("devWindow") { (windowNumber: Int, action: String) -> String in
       guard let window = NSApp.window(withWindowNumber: windowNumber) else { return "" }
       return ACChromeWindowHost.devAction(action, window: window) ?? ""
@@ -59,7 +56,6 @@ public class CefModule: Module {
       .runOnQueue(.main)
     AsyncFunction("isTracing") { ArdiaCoreHost.isTracing }.runOnQueue(.main)
     AsyncFunction("setSearchEngineName") { (name: String) in ArdiaCoreWebView.setSearchEngineName(name) }.runOnQueue(.main)
-    AsyncFunction("forgetOpenedURL") { (id: Int) in }.runOnQueue(.main)
     AsyncFunction("setDisplayMediaPicker") { (enabled: Bool) in ArdiaCoreWebView.setDisplayMediaPicker(enabled) }.runOnQueue(.main)
     AsyncFunction("setPeekModifier") { (modifier: String) in ArdiaCoreWebView.setPeekModifier(modifier) }.runOnQueue(.main)
     AsyncFunction("devPostPeekMouseUp") { (keys: String, tabId: String) in ArdiaCoreWebView.devPostPeekMouseUp(keys, over: tabId) }.runOnQueue(.main)
@@ -106,7 +102,6 @@ public class CefModule: Module {
     AsyncFunction("fetchFavicon") { (url: String, profile: String, promise: Promise) in
       ArdiaCoreFavicons.fetch(url, profile: profile, name: nil) { promise.resolve($0) }
     }.runOnQueue(.main)
-    AsyncFunction("removeLegacyFavicons") { (profile: String) in }.runOnQueue(.main)
     AsyncFunction("engineCall") { (name: String, profile: String, args: String?, promise: Promise) in
       if !CefModule.engineCalls.contains(name) { return promise.resolve(#"{"error":"not an engine call: \#(name)"}"#) }
       if profile.hasPrefix("incognito") { return promise.resolve(#"{"error":"no engine data for a private profile"}"#) }
@@ -155,9 +150,6 @@ public class CefModule: Module {
     }.runOnQueue(.main)
     AsyncFunction("devScrollZoom") { (steps: [[String: Any]], browserId: Int?) in
       ArdiaCoreWebView.devScrollZoom(steps, browserId: Int32(browserId ?? 0))
-    }.runOnQueue(.main)
-    AsyncFunction("devSwitchPrewarm") { (browserId: Int?, at: String?) in
-      ArdiaCoreWebView.devSwitchPrewarm(browserId: Int32(browserId ?? 0), at: at ?? "sidebar")
     }.runOnQueue(.main)
 
     AsyncFunction("listPasswords") { (profile: String, promise: Promise) in
@@ -239,6 +231,7 @@ public class CefModule: Module {
       Prop("neighbour") { (view: CefWebView, neighbour: Bool?) in view.browser.neighbour = neighbour ?? false }
       Prop("pageBackgroundColor") { (view: CefWebView, color: NSColor?) in view.browser.pageBackgroundColor = color }
       Prop("pageColor") { (view: CefWebView, color: String?) in view.browser.pageColor = color }
+      Prop("contentsBackgroundColor") { (view: CefWebView, color: NSColor?) in view.browser.contentsBackgroundColor = color }
       Prop("shownUrl") { (view: CefWebView, url: String?) in view.browser.shownURL = url }
       Prop("autoPictureInPicture") { (view: CefWebView, enabled: Bool?) in
         view.browser.autoPictureInPicture = enabled ?? false
@@ -246,9 +239,6 @@ public class CefModule: Module {
 
       AsyncFunction("loadUrl") { (view: CefWebView, url: String, userInitiated: Bool?) in
         view.browser.loadURL(url, userInitiated: userInitiated ?? false)
-      }.runOnQueue(.main)
-      AsyncFunction("loadOpenedUrl") { (view: CefWebView, openedId: Int, url: String) in
-        view.browser.loadOpenedURL(openedId, url: url)
       }.runOnQueue(.main)
       AsyncFunction("goBack") { (view: CefWebView) in view.browser.goBack() }.runOnQueue(.main)
       AsyncFunction("goForward") { (view: CefWebView) in view.browser.goForward() }.runOnQueue(.main)
@@ -309,9 +299,6 @@ public class CefModule: Module {
       }.runOnQueue(.main)
       AsyncFunction("resolveAutofillPrompt") { (view: CefWebView, promptId: Int, action: String) in
         view.browser.resolveAutofillPrompt(promptId, action: action)
-      }.runOnQueue(.main)
-      AsyncFunction("setTabStrip") { (view: CefWebView, index: Int, pinned: Bool) in
-        view.browser.setTabStrip(index: index, pinned: pinned)
       }.runOnQueue(.main)
       AsyncFunction("executeExtensionAction") { (view: CefWebView, extensionId: String) in
         view.browser.executeExtensionAction(extensionId)

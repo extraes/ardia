@@ -675,6 +675,13 @@ than ours at the same cap height.
 - `TabView` (`0x103dbd2f4`): the background is the row inset (1.5, 0, 1.5, 0), i.e. 34 tall; `TabShapeView` radius
   `min(h/3, 10)`, continuous corners. `TabContentView` (`0x103da24c4`): favicon 16 × 16 at x 9, centred; title at
   favicon.maxX + 7 (+ 4 with a badge slot); trailing affordance at W − 8 − size.
+- **Scroll edge** (1.53.0 binary): `TabList.TabListView` lays out the pinned dock (`TabDockView`) at its top, fixed, then a
+  `topSeparatorView` (an `ARCUI.BackgroundColorView`, colour `Primitives/Primary1200`: Display P3 black 0.09 light, white
+  0.09 dark) at (0, dock.maxY + 4, full width, **1 pt**), then the tab list's scroll view from dock.maxY + 5 with a 1 pt
+  top content inset (`SidebarLayoutGuide.tabListTopInset`); without a dock the line sits at the header's foot. The header
+  doesn't scroll either. The line starts at alpha 0; on every clip-view bounds change it targets 1 when the visible
+  rect's minY > −inset (any scroll past the top) and 0 otherwise (the top, or rubber-banding above it), animated by
+  `NSAnimationContext` over **0.1 s** with the hover card's curve (0.25, 0.46, 0.45, 0.94). Ours: sidebar/ScrollEdge.tsx.
 - A New Tab tab's icon (the favicon of a tab showing the NTP, not the "+ New Tab" row) is the Dia mark (the NTP logo's
   shape), 16 pt wide, white 0.28 in dark over any row state (measured; which asset draws it wasn't traced).
 - The clean-tabs upsell is a borderless child window (not a popover), 316 wide: title at (24, 24), a 21 × 26
@@ -889,6 +896,59 @@ to these numbers (`chrome/browser/ardia/pip/` (`engine/chromium`)); a same-crop 
 
 Ardia differs in: the origin includes a port when the page has one (Chrome's formatting), and the play glyph
 (paused) and replay glyph weren't in the recording, so they're a rounded triangle of the same height and Chrome's icon.
+
+### Picture in Picture: moving and throwing it (1.53.0, read from the binary, 2026-10-22)
+
+Read from Dia's `ARCUI.MovableWindow` code, which both its video and document PiP windows use
+(`MovableWindowContentView`, `MovableWindowHostLayer`, `WindowPosition`, the Motion library's `SpringAnimation`),
+by disassembling the arm64 binary. None of it was observed on screen: Dia is a read-only reference, so nobody swiped
+on its window.
+- **Gestures**: a click-drag anywhere on the video (an `NSPanGestureRecognizer`) and a two-finger trackpad scroll
+  (`onScroll`) both move the window. ⌘-scroll zooms instead (`onCommandScroll`). A scroll takes the window only if it
+  begins over it (`phase == .began`) with precise deltas (a trackpad or Magic Mouse). A mouse wheel does nothing, and
+  momentum events are ignored: the throw is Dia's own spring. The window follows the fingers under either
+  natural-scrolling setting (`isDirectionInvertedFromDevice` flips the deltas). The pointer hides while the window
+  moves (`setHiddenUntilMouseMoves`). On release, if the mouse hasn't moved (and a throw lasted ≥ **0.15 s**), the
+  pointer is warped to the same spot on the window at its destination (`CGWarpMouseCursorPosition`).
+- **Fling**: for a drag, the pointer's velocity at release is over **350 pt/s** and Reduce Motion is off. For a swipe,
+  the last scroll event's delta is over **6 pt**, and the throw's velocity is that delta × **90**/s.
+- **Which corner**: Dia compares the velocity's heading with the direction from the grabbed point (the spot under the
+  pointer when the gesture began, at the window's current position) to each corner of the window's screen, using the
+  screen's full frame. The closest corner within **±45°** wins. If no corner is that close, or there's no fling, the
+  window stays where it was let go (kept on screen). A slow release doesn't snap to the nearest corner.
+- **Where**: in the chosen corner of the screen's visible frame, inset by **10 pt** on each side, rounded to whole
+  points. The same 10 pt inset is used when looking for a default spot.
+- **Animation**: a spring on the window's frame: Motion's `configure(response:dampingRatio:)`, which sets stiffness
+  (2π/response)² and damping 4π·ζ/response. Response is **0.9 s** and the damping ratio **0.9**, and the spring starts
+  with the fling's velocity and counts as settled within 0.2 pt. From rest that's 50 % of the way in 0.23 s
+  (14 frames at 60 fps), 90 % in 0.49 s (29 frames) and 99 % in 0.74 s (44 frames), with at most 0.15 % overshoot.
+  A swipe thrown at 2,250 pt/s over 800 pt gets there sooner: 45 % at 9 frames, 89 % at 24. A new drag or swipe stops
+  the spring where it is. (The parameter order is Motion's public API. The binary passes (0.9, 0.9) by default and
+  (0.3, 0.9) from one other caller.)
+- **Screens**: the corners are those of the screen the window is on (the first screen whose visible frame, inset by
+  10 pt, meets it). A throw never crosses to another display, but a drag can.
+- **Edges**: a fling toward a side of the screen the window is at (over 180 pt/s for a drag, a delta over 4 pt for a
+  swipe) stashes it off that side instead (`WindowPosition.offscreen`: the frame moves its width + 10 pt past the edge).
+- **Remembered**: as a `WindowPosition` (`screen(corner, …)`, `offscreen(corner, …)` or `absolute(rect)`), saved as
+  `LastVideoPIPPosition`. A thrown window is remembered by its corner and a dropped one by its frame.
+- **Tilt**: Dia also tilts the window while it's dragged (`dragAngleAnimation`, 0.005 × speed).
+
+**Ardia** (`ArdiaCorePictureInPicture.mm`, the maths in `ArdiaCorePiPThrow.h`, tested by `pnpm -C packages/ardiacore test`)
+does the same on Chrome's video PiP window, using the same thresholds, corner rule, 10 pt inset and spring. It
+differs in a few places:
+- Chrome's window can't tilt.
+- The window is remembered by its frame (Chrome's `ArdiaPictureInPicture.plist`), not by its corner.
+- A drag or swipe past a screen side keeps Ardia's 28 pt peek stash rather than Dia's off-screen one.
+- A swipe whose fingers rested more than 0.1 s before lifting doesn't throw.
+- Its screen is the one the window overlaps most.
+- While a swipe or drag moves it, the window keeps at least 60 pt × 40 % on a display. It slides along an edge rather than leaving, and stays below the menu bar and above the Dock unless another display lies that way.
+- A window larger than its display stays on that display.
+- A window left unreachable at the end of any gesture, throw or slide animates back onto its display.
+- The pointer is hidden and warped only in a real run; test instances leave it alone.
+
+Measured in a hidden instance (3440 × 1410 and 1512 × 949 visible frames, 501 × 282 and 336 × 189 windows): every throw landed exactly 10 pt
+from the corner, for example (2929, 10) bottom right and (10, 1118) top left. Every frame was within 1 pt of the spring
+model at 120 Hz ticks: 26–36 % of the way at 0.1 s, 58–73 % at 0.25 s, 92–96 % at 0.5 s, the last move at about 1.3 s.
 
 ### Still unknown (needs a capture of Dia 1.50.1)
 - The painted mark's exact outline and position inside the 84pt view (particle uniforms). The `shadeLayer` path

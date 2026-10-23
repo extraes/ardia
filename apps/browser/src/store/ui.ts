@@ -4,6 +4,7 @@ import type { BrowserState } from "./browser";
 import { engineProfile, isIncognitoProfile, privateSession } from "./model";
 import { originalProfile } from "./small";
 import type { FindState, NewTabTarget, WindowUi } from "./types";
+import { commandBarFocus, expectFocus } from "../lib/focusClaims";
 
 export type UiSlice = {
   ui: {
@@ -76,6 +77,7 @@ export const createUiSlice: StateCreator<BrowserState, [], [], UiSlice> = (set, 
   },
 
   openPanel(windowId, initialText = "", newTab) {
+    expectFocus(windowId, commandBarFocus);
     set((s) => patchWindowUi(s, windowId, { panel: newTab ? { open: true, initialText, newTab } : { open: true, initialText } }));
   },
 

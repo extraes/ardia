@@ -45,7 +45,9 @@ const isErrorLike = (v: unknown): v is ErrorLike =>
 function describe(value: unknown): string {
   if (typeof value === "string") return value;
   try {
-    return JSON.stringify(value) ?? String(value);
+    const json = JSON.stringify(value) ?? String(value);
+    const tagged = json === "{}" && typeof value === "object" && value !== null && Object.getPrototypeOf(value) !== Object.prototype;
+    return tagged ? `${Object.prototype.toString.call(value)} {}` : json;
   } catch {
     return String(value);
   }
@@ -122,7 +124,11 @@ function text(args: unknown[]): string {
   return args
     .map((a) => {
       if (typeof a === "string") return a;
-      if (isErrorLike(a)) return typeof a.stack === "string" && a.stack ? a.stack : `${String(a.name)}: ${String(a.message)}`;
+      if (isErrorLike(a)) {
+        const head = `${String(a.name)}: ${String(a.message)}`;
+        if (typeof a.stack !== "string" || !a.stack) return head;
+        return a.stack.includes(String(a.message)) ? a.stack : `${head}\n${a.stack}`;
+      }
       const s = describe(a);
       return s.length > 1000 ? `${s.slice(0, 1000)}…` : s;
     })

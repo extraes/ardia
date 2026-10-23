@@ -147,6 +147,7 @@ type AppModule = {
   devMenuCommand(command: string, arg: string | null): Promise<void>;
   devTypeKeys(windowId: string, text: string, interval: number): Promise<KeyTiming[]>;
   devKeyEquivalent(windowId: string, press: KeyPress): Promise<KeyPressResult>;
+  devClick(windowId: string, click: Click): Promise<ClickResult>;
   crashReports(since: number): Promise<CrashReport[]>;
   devCrash(kind?: "exception"): Promise<void>;
 };
@@ -233,6 +234,7 @@ export type KeyPress = {
   settle?: number;
   wait?: number;
   dry?: boolean;
+  send?: boolean;
 };
 export type KeyPressResult = {
   handledBy?: "page" | "window" | "menu" | "none";
@@ -243,4 +245,7 @@ export type KeyPressResult = {
 };
 export const devKeyEquivalent = (windowId: string, press: KeyPress): Promise<KeyPressResult> =>
   App.devKeyEquivalent(windowId, press);
+export type Click = { x: number; y: number; in?: "window" | "page"; asKey?: boolean; wait?: number };
+export type ClickResult = { hit?: string; firstResponder?: string; firstResponderOnClick?: string; firstResponderAfter?: string; error?: string };
+export const devClick = (windowId: string, click: Click): Promise<ClickResult> => App.devClick(windowId, click);
 export const devMenuCommand = (command: string, arg: string | null = null) => App.devMenuCommand(command, arg);

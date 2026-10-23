@@ -11,7 +11,7 @@ import { engineVersion, widevine as widevineComponent } from "../paneData";
 import { useResource } from "../resources";
 
 const REPOSITORY = "https://github.com/mantrakp04/ardia";
-const SOURCE_NOTICE = "Ardia is open source under the Apache License 2.0.";
+const SOURCE_NOTICE = "Ardia is free software under the GNU General Public License v3, with no warranty.";
 
 const BATTERY_SAVER_DESCRIPTIONS: Record<BatterySaverWhen, string> = {
   lowBattery: "At 20% battery or less, or in Low Power Mode, busy background tabs pause and animations slow down.",

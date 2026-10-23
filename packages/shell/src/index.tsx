@@ -115,6 +115,7 @@ export type CommandEvent = {
   command: BrowserCommand;
   arg: string | null;
   windowId: string | null;
+  focusGeneration?: number | null;
 };
 
 export type WindowEvent =
@@ -134,7 +135,8 @@ export type AppEvent =
   | { type: "screenLocked" }
   | { type: "switcherReleased" }
   | { type: "switcherKey"; key: "escape" | "next" | "previous" }
-  | { type: "switcherMouseUp" };
+  | { type: "switcherMouseUp" }
+  | { type: "dragEscape" };
 
 type ShellEvents = {
   onCommand: (e: CommandEvent) => void;
@@ -217,6 +219,9 @@ const Shell = requireNativeModule<{
   showMenu(items: MenuItem[]): Promise<string | null>;
   copyText(text: string): void;
   setSwitcherCapture(active: boolean): Promise<void>;
+  setDragEscapeCapture?(active: boolean): Promise<void>;
+  cancelFocusMove(generation: number, restoringSource: boolean): Promise<void>;
+  claimFocus(generation: number, tag: number): Promise<void>;
   switcherPointerMoved?(): boolean;
   startDictation(): void;
   pickFiles(): Promise<string[]>;
@@ -224,6 +229,7 @@ const Shell = requireNativeModule<{
   writeDocument(name: string, contents: string): void;
   saveDocument(name: string, contents: string): Promise<void>;
   removeDocument(name: string): void;
+  fetchBangList?(etag: string | null): Promise<BangListReply>;
   openWindow(id: string, options: OpenWindowOptions): Promise<void>;
   closeWindow(id: string): Promise<void>;
   focusWindow(id: string): Promise<void>;
@@ -253,8 +259,15 @@ export const writeDocument = (name: string, contents: string) => Shell.writeDocu
 export const saveDocument = (name: string, contents: string) => Shell.saveDocument(name, contents);
 export const removeDocument = (name: string) => Shell.removeDocument(name);
 
+export type BangListReply = { status: number; etag: string | null; contentType: string | null; body: string | null; bytes: number };
+export const fetchBangList = (etag: string | null): Promise<BangListReply> | null => Shell.fetchBangList?.(etag) ?? null;
+
 export const startDictation = () => Shell.startDictation();
 export const setSwitcherCapture = (active: boolean) => void Shell.setSwitcherCapture(active);
+export const setDragEscapeCapture = (active: boolean) => void Shell.setDragEscapeCapture?.(active);
+export const cancelFocusMove = (generation: number, restoringSource: boolean) =>
+  void Shell.cancelFocusMove(generation, restoringSource);
+export const claimFocus = (generation: number, tag: number) => void Shell.claimFocus(generation, tag);
 export const restartSwitcherPointer = () => Shell.setSwitcherCapture(true);
 export const switcherPointerMoved = () => Shell.switcherPointerMoved?.() ?? true;
 export const pickFiles = () => Shell.pickFiles();

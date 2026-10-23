@@ -8,6 +8,7 @@ import { noteChromeTab } from "../lib/cliControl";
 import { takeStartedNavigation } from "../lib/earlyNavigate";
 import { isQuitting } from "../lib/native";
 import { layout, useTheme } from "../lib/theme";
+import { opaqueCard } from "../lib/opaqueCard";
 import { startChromeTabs } from "../lib/chromeTabs";
 import { handOff, isHandedOff, wantsPage } from "../lib/tabPages";
 import { noteDiscarded, noteGone, noteReady } from "../lib/tabLifecycle";
@@ -442,6 +443,8 @@ const TabWebView = memo(function TabWebView({ tabId, visible, warm }: { tabId: s
   const ref = useMemo(() => webviewRef(tabId), [tabId]);
   const autoPictureInPicture = useAutoPictureInPicture(tabId, visible);
   const pageColor = useProfilesValue(profileId, (profiles) => (isIncognitoProfile(profileId) ? "incognito" : (profiles[profileId]?.color ?? "plum")));
+  const theme = useTheme();
+  const backdrop = useMemo(() => opaqueCard(theme), [theme.card, theme.windowTint[0], theme.windowTint[1]]);
 
   const lastPage = useRef<string | null>(null);
   const pending = useRef<string | null>(navigation?.url ?? (adoptId ? (tab()?.url ?? null) : null));
@@ -501,6 +504,7 @@ const TabWebView = memo(function TabWebView({ tabId, visible, warm }: { tabId: s
       neighbour={neighbour}
       autoPictureInPicture={autoPictureInPicture}
       pageColor={pageColor}
+      contentsBackgroundColor={backdrop}
       shownUrl={shownUrl}
       onReady={(browserId, chromeTabId) => {
         setBrowserId(tabId, browserId);

@@ -257,7 +257,7 @@ and sent only when changed, progress at most 10 times a second, a held report fl
 
 | Method | Status | Note |
 |---|---|---|
-| `loadUrl`, `loadOpenedUrl`, `goBack`, `goForward`, `goToOffset`, `reload`, `forceReload`, `stopLoading`, `focus` | done | |
+| `loadUrl`, `goBack`, `goForward`, `goToOffset`, `reload`, `forceReload`, `stopLoading`, `focus` | done | |
 | `setMuted`, `zoomStep`, `find`, `stopFinding`, `showDevTools` | done | DevTools dock in the tab's view |
 | `executeJavaScript`, `evaluate`, `navigationEntries` | done | ArdiaCore's renderer side (`ACContentRendererClient`, a mojo channel) |
 | `getSecurityInfo`, `openBlockedPopup`, `clearSiteData`, `discard`, `setFrozen` | done | `discard` answers what happened (`discarded`, `already`, `refused`; `unload` is `unsupported`: ArdiaCore keeps a regular profile loaded), and a woken tab sends `onReady` again |
@@ -281,7 +281,7 @@ The app closes a tab by unmounting its WebView; ArdiaCore closes it at once with
 | `prepareTransfer`, `releaseTransfer`, `tabStripCommand`, `tabStrips`, `onTabStrip` | done | Rec. 1's contract natively: a strip is one profile's Browser in one ArdiaCoreWindow; revisioned transactions naming their cause; `group` (`ac_tabs_group`), `closed` strips, `appWindow`, `activePickedOnClose` |
 | `engineCall`, `onEngineEvent` | done | `//chrome/browser/ardia`'s C exports, the same code as CEF's |
 | `components`, `listTasks`, `beginTracing`, `endTracing`, `isTracing` | done | |
-| `setSearchEngineName`, `forgetOpenedURL`, `removeLegacyFavicons` | done | The last two have nothing to do on ArdiaCore |
+| `setSearchEngineName` | done | |
 | `fetchFavicon` | done | `(url, profile)` → `data:` PNG |
 | `onDownload`, `cancelDownload`, `pauseDownload`, `resumeDownload` | done | `ac_downloads_*` over Chrome's DownloadManager |
 | `onPermission`, `resolvePermission` | done | One answer per prompt (`ac_permissions.mm`): a page's permission element (Chrome's embedded flow) reaches the app only for its site question; the steps after Allow ("ask macOS", "open System Settings", policy) stay in the engine, as Chrome's own view does, and a later step is never a question even if the site's setting was reset meanwhile. 0.2.21 answered those steps with a second Accept and aborted (`camera-mic-allow`, `permission-answer-once`, `permission-element-allow`) |
@@ -331,12 +331,11 @@ paging on ArdiaCore is a change of the window's active profile, never a window s
 
 ## Window hosting (`ACChromeWindowHost`, looked up by `packages/shell/ios/ChromeWindows.swift`)
 
-All 13 **done**: `makeWindowForProfile:` (one `ArdiaCoreWindow` per app window, styled as the app's),
+All 12 **done**: `makeWindowForProfile:` (one `ArdiaCoreWindow` per app window, styled as the app's),
 `embedRootView:inWindow:`, `rootViewOfWindow:`, `removeRootViewOfWindow:`, `showProfile:inWindow:` (the traffic
 lights are placed again after every switch), `prepareProfiles:forWindow:`, `setTrafficLightsCenter:inWindow:`,
 `closeWindow:`, `shouldCloseHandler` and `windowShouldClose:` (the title-bar close button asks the app),
-`devAction:window:` (`lights`, `close-button`), `swappedHandler` (never fires: no window swaps on ArdiaCore) and
-`makePopupWindowForProfile:root:` (CEF-internal, for its own popup windows; ArdiaCore's popups are live tabs).
+`devAction:window:` (`lights`, `close-button`) and `swappedHandler` (never fires: no window swaps on ArdiaCore).
 
 ## Runtime
 
@@ -389,7 +388,7 @@ Plain Chromium code over Chrome's services (`engine/chromium/src/chrome/browser/
 | `ac_site_settings_*`, `ac_site_data_clear` | the site-settings functions, both `clearSiteData`s |
 | `ac_external_apps_allowances`, `_remove` | `getExternalAppAllowances`, `removeExternalAppAllowance` |
 | `ac_tasks_list`, `ac_components_list` | `listTasks` (memory telemetry, the dev harness), `components` |
-| `ac_task_manager_open`, `ac_battery_saver` | `openTaskManager` / `hideTaskManager` (Chrome's Views Task Manager), `setBatterySaver` (Chrome's battery saver mode pref) |
+| `ac_task_manager_open`, `ac_battery_saver` | `openTaskManager` (Chrome's Views Task Manager), `setBatterySaver` (Chrome's battery saver mode pref) |
 | `ac_history_*`, `ac_favicons_*`, `ac_bookmarks_*` | `history.ts`, `favicons.ts`, `bookmarks.ts` (through `engineCall`) |
 | `ac_tab_restore_tag`, `_take`, `_load` | native: the WebView's attach (and close) and `restore:` |
 | `ac_tabs_watch`, `ac_tabs_group` | tab groups in strip transactions |

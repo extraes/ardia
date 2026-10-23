@@ -74,7 +74,7 @@ Not WebKit. Not Electron. Every window is Chrome’s own, so sites, extensions a
 | Part | Details | Status |
 | --- | --- | --- |
 | Engine | Chromium 155, on Chrome’s own framework. | ✓ Yes |
-| De-Googled | ungoogled-chromium underneath. | ✓ Yes |
+| De-Googled | Google’s background services stripped out. | ✓ Yes |
 | H.264 and AAC | The codecs Chromium leaves out. | ✓ Yes |
 | DevTools | Docked, with device mode. Like Chrome. | ✓ Yes |
 | Sync | End-to-end encrypted, through your own iCloud Drive. | ✓ Yes |
@@ -128,7 +128,7 @@ is newer than the last release's, work from a release tag (`v0.2.30`, say), or r
 cards need our team ID and won't work in a build signed by anyone else.
 
 To change the engine itself (anything under `engine/`), build it from source: Chrome's framework from our patched
-Chromium tree in `~/chromium-build` (plain Chromium 155.0.8059.84, ungoogled-chromium and our patches;
+Chromium tree in `~/chromium-build` (Chromium 155.0.8059.84 with the patch series in `engine/patches`;
 `docs/engine-build.md` › "Rebuilding", then `engine/chromium/apply.sh`,
 `engine/ardiacore/apply.sh` and `autoninja -C out/Release_GN_arm64 chrome_framework`; the first build takes about 2
 hours). The app's build stages it from there when it exists.
@@ -223,6 +223,7 @@ Feature parity with Dia (everything but its AI) is tracked row by row in
 
 ## License
 
-Ardia is licensed under the [Apache License 2.0](LICENSE). It builds on Chromium and ungoogled-chromium,
-carries a few of the Chromium Embedded Framework's patches to Chromium (BSD-3-Clause), and bundles uBlock Origin,
-each under its own license; see [NOTICE](NOTICE).
+Ardia as distributed is licensed under the [GNU General Public License v3](LICENSE), because its engine is built
+with GPL-3.0 patches. Ardia's own source files are under the [Apache License 2.0](LICENSE.Apache-2.0). It builds on
+Chromium, carries a few of the Chromium Embedded Framework's patches to Chromium (BSD-3-Clause), and bundles uBlock
+Origin, each under its own license; see [NOTICE](NOTICE). Every release links its source.

@@ -5,7 +5,7 @@ import ExpoModulesCore
 public class AppModule: Module {
   public func definition() -> ModuleDefinition {
     Name("ArdiaApp")
-    Constant("apiVersion") { () -> Int in 11 }
+    Constant("apiVersion") { () -> Int in 12 }
     Events("onNotificationResponse", "onScriptCommand")
 
     OnCreate {
@@ -187,6 +187,41 @@ public class AppModule: Module {
       #endif
     }.runOnQueue(.main)
 
+    AsyncFunction("devPostKeys") { (windowId: String, presses: [[String: Any]], promise: Promise) in
+      #if DEBUG
+      guard let window = WindowManager.shared.windows[windowId] else { return promise.resolve([]) }
+      let names: [String: NSEvent.ModifierFlags] = [
+        "command": .command, "shift": .shift, "option": .option, "control": .control, "function": .function,
+      ]
+      var postedAt: [Double] = []
+      func post(_ index: Int) {
+        guard index < presses.count else { return promise.resolve(postedAt) }
+        let press = presses[index]
+        let after = press["after"] as? Int ?? 0
+        let send = {
+          let key = press["key"] as? String ?? ""
+          let mods = NSEvent.ModifierFlags((press["modifiers"] as? [String] ?? []).compactMap { names[$0] })
+          let phase = press["phase"] as? String
+          let types: [NSEvent.EventType] = phase == "down" ? [.keyDown] : phase == "up" ? [.keyUp] : [.keyDown, .keyUp]
+          for type in types {
+            if let event = NSEvent.keyEvent(
+              with: type, location: .zero, modifierFlags: mods, timestamp: ProcessInfo.processInfo.systemUptime,
+              windowNumber: window.windowNumber, context: nil, characters: key, charactersIgnoringModifiers: key,
+              isARepeat: false, keyCode: UInt16(press["keyCode"] as? Int ?? 0)) {
+              NSApp.postEvent(event, atStart: false)
+            }
+          }
+          postedAt.append(ProcessInfo.processInfo.systemUptime * 1000)
+          post(index + 1)
+        }
+        if after > 0 { DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(after), execute: send) } else { send() }
+      }
+      post(0)
+      #else
+      promise.resolve([])
+      #endif
+    }.runOnQueue(.main)
+
     AsyncFunction("devMenuItems") { (title: String, perform: [String]?) -> [[String: Any]] in
       #if DEBUG
       var tiling: NSMenu?
@@ -228,6 +263,15 @@ public class AppModule: Module {
         }
       }
       return flags.isEmpty ? listed : [flags] + listed
+      #else
+      return []
+      #endif
+    }.runOnQueue(.main)
+
+    AsyncFunction("devDragBlockedRects") { (windowId: String) -> [[Double]] in
+      #if DEBUG
+      guard let window = WindowManager.shared.windows[windowId] else { return [] }
+      return ServerWindowDrag.blockedRects(window)
       #else
       return []
       #endif
@@ -358,6 +402,30 @@ public class AppModule: Module {
     AsyncFunction("devKeyEquivalent") { (windowId: String, press: [String: Any], promise: Promise) in
       #if DEBUG
       KeyEquivalents.press(windowId: windowId, press) { promise.resolve($0) }
+      #else
+      promise.resolve(["error": "DEV builds only"])
+      #endif
+    }.runOnQueue(.main)
+
+    AsyncFunction("devKeyEquivalentTrace") { () -> [String] in
+      #if DEBUG
+      return KeyEquivalents.trace
+      #else
+      return []
+      #endif
+    }.runOnQueue(.main)
+
+    AsyncFunction("devFocusHandoffTrace") { () -> [String] in
+      #if DEBUG
+      return FocusHandoff.shared.trace
+      #else
+      return []
+      #endif
+    }.runOnQueue(.main)
+
+    AsyncFunction("devClick") { (windowId: String, click: [String: Any], promise: Promise) in
+      #if DEBUG
+      KeyEquivalents.click(windowId: windowId, click) { promise.resolve($0) }
       #else
       promise.resolve(["error": "DEV builds only"])
       #endif
@@ -596,16 +664,23 @@ enum KeyEquivalents {
   private static var pressing = 0, dryPressing = 0
   private static var handler: ((String, String?, String?) -> Void)?
   private static var menuKeyIMP: IMP?
+  private(set) static var trace: [String] = []
+
+  private static func note(_ line: String) {
+    trace.append(String(format: "%.1f ", CACurrentMediaTime() * 1000) + line)
+    if trace.count > 40 { trace.removeFirst(trace.count - 40) }
+  }
 
   static func press(windowId: String, _ press: [String: Any], _ done: @escaping ([String: Any]) -> Void) {
     guard let window = WindowManager.shared.windows[windowId] else { return done(["error": "no window \(windowId)"]) }
+    note("press \(press["key"] ?? "") \(press["modifiers"] ?? "") focus=\(press["focus"] ?? "-")")
     watch()
     let key = press["key"] as? String ?? ""
     let mods = NSEvent.ModifierFlags((press["modifiers"] as? [String] ?? []).compactMap { modifierNames[$0] })
     switch press["focus"] as? String {
     case "window": window.makeFirstResponder(nil)
     case "page": if let page = pageViews(in: window).first { window.makeFirstResponder(page) }
-    case "devtools": if let devTools = pageViews(in: window).dropFirst().first { window.makeFirstResponder(devTools) }
+    case "devtools": if let devTools = pageViews(in: window).first(where: isDevTools) { window.makeFirstResponder(devTools) }
     default: break
     }
     if let settle = press["settle"] as? Int, settle > 0 {
@@ -623,7 +698,8 @@ enum KeyEquivalents {
     else { return done(["error": "no event for \(key)"]) }
     let restoreKeyWindow = press["asKey"] as? Bool == true ? standInKeyWindow(window) : nil
     let dry = press["dry"] as? Bool == true
-    begin(dry: dry)
+    let throughAppKit = press["send"] as? Bool == true && !dry
+    if !throughAppKit { begin(dry: dry) }
     fired = []
     matched = []
     NSApp.postEvent(event, atStart: true)
@@ -653,12 +729,45 @@ enum KeyEquivalents {
     } else {
       result["handledBy"] = "none"
     }
+    note("dispatched \(result["handledBy"] ?? "")")
     DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(press["wait"] as? Int ?? 250)) {
       result["firstResponderAfter"] = window.firstResponder.map { String(describing: type(of: $0)) } ?? "nil"
       restoreKeyWindow?()
-      end(dry: dry)
+      if !throughAppKit { end(dry: dry) }
       result["fired"] = fired
       result["matched"] = matched
+      note("resolved")
+      done(result)
+    }
+  }
+
+  static func click(windowId: String, _ click: [String: Any], _ done: @escaping ([String: Any]) -> Void) {
+    guard let window = WindowManager.shared.windows[windowId], let content = window.contentView else {
+      return done(["error": "no window \(windowId)"])
+    }
+    var origin = NSPoint.zero
+    if click["in"] as? String == "page" {
+      guard let page = pageViews(in: window).first else { return done(["error": "no page in \(windowId)"]) }
+      let frame = page.convert(page.bounds, to: content)
+      origin = NSPoint(x: frame.minX, y: content.isFlipped ? frame.minY : content.bounds.height - frame.maxY)
+    }
+    let x = origin.x + (click["x"] as? Double ?? 0), y = origin.y + (click["y"] as? Double ?? 0)
+    let point = content.convert(NSPoint(x: x, y: content.isFlipped ? y : content.bounds.height - y), to: nil)
+    let responderName = { window.firstResponder.map { String(describing: type(of: $0)) } ?? "nil" }
+    let hit = content.superview.flatMap { $0.hitTest(point) }
+    var result: [String: Any] = ["firstResponder": responderName(), "hit": hit.map { String(describing: type(of: $0)) } ?? "nil"]
+    let restoreKeyWindow = click["asKey"] as? Bool == false ? nil : standInKeyWindow(window)
+    for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
+      guard let event = NSEvent.mouseEvent(
+        with: type, location: point, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+        windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: type == .leftMouseDown ? 1 : 0)
+      else { return done(["error": "no mouse event"]) }
+      NSApp.sendEvent(event)
+    }
+    result["firstResponderOnClick"] = responderName()
+    DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(click["wait"] as? Int ?? 250)) {
+      result["firstResponderAfter"] = responderName()
+      restoreKeyWindow?()
       done(result)
     }
   }
@@ -757,7 +866,15 @@ enum KeyEquivalents {
     }
     window.contentView.map(walk)
     let area = { (v: NSView) in v.visibleRect.width * v.visibleRect.height }
-    return views.sorted { area($0) > area($1) }
+    let devTools = views.filter(isDevTools)
+    return views.filter { !isDevTools($0) }.sorted { area($0) > area($1) } + devTools.sorted { area($0) > area($1) }
+  }
+
+  private static func isDevTools(_ view: NSView) -> Bool {
+    var tab: NSView? = view.superview
+    while let current = tab, String(describing: type(of: current)) != "ArdiaCoreWebView" { tab = current.superview }
+    guard let tab, let devTools = tab.value(forKey: "devtoolsView") as? NSView else { return false }
+    return view.isDescendant(of: devTools)
   }
 }
 #endif

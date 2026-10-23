@@ -27,4 +27,3 @@ export const compareVersions = (a: string, b: string) => {
 
 export const newestFirst = (a: string, b: string) => compareVersions(b, a);
 
-export const isNightlyVersion = (version: string) => /-nightly\.\d+$/.test(version);

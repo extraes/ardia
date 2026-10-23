@@ -1,4 +1,4 @@
-import { hapticTick } from "@ardia/shell";
+import { hapticTick, onAppEvent, setDragEscapeCapture } from "@ardia/shell";
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 import { Animated, Easing, PanResponder, type ScrollView, type View } from "react-native";
 import { create, useStore } from "zustand";
@@ -11,6 +11,7 @@ import { beginTabDrag, cancelTabDrag, endTabDrag, setDragPicture, updateTabDrag,
 import { useClipped, type ClipSource } from "./entryMotion";
 import { suppressHover } from "./hover";
 import { overPins, pinGridHeight, pinSlot, TILE_GAP } from "./pinZone";
+import { SCROLL_EDGE } from "./ScrollEdge";
 
 type Frame = { x: number; y: number; w: number; h: number };
 type Section = "tiles" | "pinnedRows" | "pinnedGroups" | "list";
@@ -64,6 +65,8 @@ class DragController {
   root: View | null = null;
   scroll: ScrollView | null = null;
   scrollY = 0;
+  tilesFixed = true;
+  tilesRoom = Infinity;
   setGhost: (ghost: Ghost | null) => void = () => {};
   marks = create<Marks>()(() => NO_MARKS);
   setSources = (sources: Set<string>) => this.marks.setState({ sources });
@@ -88,6 +91,7 @@ class DragController {
   private gridGrowth = 0;
   private token: object | null = null;
   private external = 0;
+  private escapable = false;
   landed: { key: string; x: number; y: number } | null = null;
 
   create(key: string): Item {
@@ -108,6 +112,8 @@ class DragController {
       : [item];
     const token = (this.token = {});
     suppressHover(true);
+    this.escapable = true;
+    setDragEscapeCapture(true);
     let seq = 0;
     if (item.kind === "row" || item.kind === "tile") {
       const single = this.sources.length === 1 ? (item.tabIds[0] ?? null) : null;
@@ -200,6 +206,7 @@ class DragController {
 
   end(commit: boolean) {
     if (this.external) return void this.finishExternal(false);
+    if (!this.sources.length) return;
     const sources = this.sources;
     const drop = this.drop;
     const ghost = this.ghost;
@@ -258,6 +265,8 @@ class DragController {
     this.gridBase = null;
     this.gridGrowth = 0;
     this.external = 0;
+    if (this.escapable) setDragEscapeCapture(false);
+    this.escapable = false;
     suppressHover(false);
     this.setSources(new Set());
     this.marks.setState({ dropInto: null, onto: null, pins: false, pinCount: 0 });
@@ -282,7 +291,7 @@ class DragController {
     if (!emptied && source !== ref && source.frame && source.frame.y < top)
       closing += source.parentGroup ? Math.max(0, now(source.size) - ROW_GAP) + ROW_GAP : now(source.size);
     const container = ref.kind === "tail" ? [...this.items.values()].find((i) => i !== source && i.kind !== "tail" && i.frame && i.section === ref.section && i.parentGroup === ref.parentGroup) : ref;
-    const home = target ? null : this.at(source.frame);
+    const home = target ? null : this.at(source.frame, this.still(source));
     if (home) return Promise.resolve({ x: home.x, y: home.y });
     return Promise.all([measure(ref.view), emptied ? measure(group!.view) : null]).then(([f, gone]) => {
       if (!f) return null;
@@ -305,9 +314,14 @@ class DragController {
     }, 16);
   }
 
-  private at(f: Frame | null): Frame | null {
+  private still(i: Item): boolean {
+    return this.tilesFixed && i.section === "tiles";
+  }
+
+  private at(f: Frame | null, fixed = false): Frame | null {
     if (!f) return null;
-    const below = !!this.gridBase && f.y >= this.gridBase.y + this.gridBase.h;
+    if (fixed) return f;
+    const below = !!this.gridBase && (this.tilesFixed || f.y >= this.gridBase.y + this.gridBase.h);
     return { ...f, y: f.y - (this.scrollY - this.startScrollY) + (below ? this.gridGrowth : 0) };
   }
 
@@ -315,7 +329,8 @@ class DragController {
     const list = this.at(this.regionFrames.get("list") ?? null);
     const pinnedArea = this.at(this.regionFrames.get("pinnedGroups") ?? null);
     const rows = live.filter((i) => i.kind !== "tail" && (i.section === "pinnedRows" || i.section === "pinnedGroups")).map((i) => this.at(i.frame)!.y);
-    return Math.min(list?.y ?? tiles.y + tiles.h + TILE_GAP, pinnedArea?.y ?? Infinity, ...rows);
+    const top = Math.min(list?.y ?? tiles.y + tiles.h + TILE_GAP, pinnedArea?.y ?? Infinity, ...rows);
+    return this.tilesFixed ? Math.max(top, tiles.y + tiles.h + this.gridGrowth + SCROLL_EDGE.gap + SCROLL_EDGE.line) : top;
   }
 
   private overPinnedRows(y: number): boolean {
@@ -332,7 +347,7 @@ class DragController {
       const f = this.shown(i);
       return f.y + Math.min(f.h, i.headerFrame?.h ?? f.h) / 2;
     };
-    const byY = (a: Item, b: Item) => this.at(a.frame)!.y - this.at(b.frame)!.y || a.frame!.x - b.frame!.x;
+    const byY = (a: Item, b: Item) => this.at(a.frame, this.still(a))!.y - this.at(b.frame, this.still(b))!.y || a.frame!.x - b.frame!.x;
     const dragged = new Set(this.sources.flatMap((s) => s.tabIds));
     const firstTab = (i: Item | undefined) => i?.tabIds.find((id) => !dragged.has(id)) ?? null;
     const tabsDrag = source.kind === "row" || source.kind === "tile";
@@ -345,11 +360,12 @@ class DragController {
     let onto: string | null = null;
 
     const sidebar = this.viewport ?? this.rootFrame;
-    const tiles = this.at(this.regionFrames.get("tiles") ?? null);
+    const tiles = this.at(this.regionFrames.get("tiles") ?? null, this.tilesFixed);
     const away = x > sidebar.x + sidebar.w + 40 || x < sidebar.x - 40 || useTabDrag.getState().outside;
     const cells = live.filter((i) => i.kind === "tile").sort(byY);
     const overTiles = !away && tabsDrag && !!tiles && (this.gridBase ? overPins(y, this.pinFloor(live, tiles), this.pinning) : inside(tiles, x, y, 6));
-    if (this.gridBase) this.gridGrowth = pinGridHeight(cells.length + (overTiles ? count : 0), this.gridBase.w, layout.pinnedHeight) - this.gridBase.h;
+    if (this.gridBase)
+      this.gridGrowth = Math.min(pinGridHeight(cells.length + (overTiles ? count : 0), this.gridBase.w, layout.pinnedHeight), this.tilesFixed ? this.tilesRoom : Infinity) - this.gridBase.h;
     if (away) {
       drop = { type: "none" };
     } else if (overTiles && tiles) {
@@ -433,7 +449,7 @@ class DragController {
   }
 
   private shown(i: Item): Frame {
-    const f = this.at(i.frame)!;
+    const f = this.at(i.frame, this.still(i))!;
     if (!this.dropKey) return f;
     const [top, bottom] = [i.frame!.y, i.frame!.y + i.frame!.h];
     let dy = 0;
@@ -470,6 +486,10 @@ export function DragProvider({ children }: { children: (ghost: Ghost | null, con
   const [ghost, setGhost] = useState<Ghost | null>(null);
   controller.setGhost = setGhost;
   useEffect(() => () => void (controller.active && controller.end(false)), [controller]);
+  useEffect(() => {
+    const sub = onAppEvent((e) => e.type === "dragEscape" && controller.active && controller.end(false));
+    return () => sub.remove();
+  }, [controller]);
   return (
     <DragContext.Provider value={controller}>
       {children(ghost, controller)}

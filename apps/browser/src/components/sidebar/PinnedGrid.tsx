@@ -25,7 +25,7 @@ const SELECTION_STROKE = 3;
 const GLASS_RIM = 1;
 const TILE_SPACING = { marginRight: TILE_GAP };
 
-export const PinnedGrid = memo(function PinnedGrid({ tabs, innerWidth }: { tabs: string[]; innerWidth: number }) {
+export const PinnedGrid = memo(function PinnedGrid({ tabs, innerWidth, flush = false }: { tabs: string[]; innerWidth: number; flush?: boolean }) {
   const controller = useDragController();
   const count = usePinnedCount(tabs);
   const { width } = pinGrid(count, innerWidth);
@@ -39,7 +39,7 @@ export const PinnedGrid = memo(function PinnedGrid({ tabs, innerWidth }: { tabs:
       ref={(v) => {
         controller?.regions.set("tiles", v);
       }}
-      style={{ marginTop: topGap }}
+      style={{ marginTop: flush ? 0 : topGap }}
     >
       <View style={{ height: pinGridHeight(count, innerWidth, layout.pinnedHeight), flexDirection: "row", flexWrap: "wrap", rowGap: TILE_GAP, marginRight: -TILE_GAP }}>
         {tabs.map((id) => (

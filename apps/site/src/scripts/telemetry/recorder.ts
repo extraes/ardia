@@ -49,17 +49,22 @@ function report(sid: string, seq: number, events: eventWithTime[], bytes: number
 const document_ = (sid: string, seq: number, events: eventWithTime[]) =>
   JSON.stringify({ session_id: sid, seq, distinct_id: distinctId, events });
 
-async function gzip(text: string): Promise<ArrayBuffer> {
-  const stream = new Blob([text]).stream().pipeThrough(new CompressionStream("gzip"));
-  return new Response(stream).arrayBuffer();
+async function gzipOrPlain(text: string): Promise<ArrayBuffer | string> {
+  if (typeof CompressionStream !== "function") return text;
+  try {
+    const stream = new Blob([text]).stream().pipeThrough(new CompressionStream("gzip"));
+    return await new Response(stream).arrayBuffer();
+  } catch {
+    return text;
+  }
 }
 
 async function upload(sid: string, events: eventWithTime[]): Promise<void> {
   if (!events.length) return;
-  const compress = typeof CompressionStream === "function";
   const seq = nextSeq(sid);
   const text = document_(sid, seq, events);
-  const body = compress ? await gzip(text) : text;
+  const body = await gzipOrPlain(text);
+  const compress = typeof body !== "string";
   const bytes = typeof body === "string" ? body.length : body.byteLength;
   if (bytes > MAX_CHUNK) {
     if (events.length === 1) return;

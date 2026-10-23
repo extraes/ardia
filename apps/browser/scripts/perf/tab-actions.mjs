@@ -302,10 +302,16 @@ async function runAction(rig, ctx, name) {
   const key = (chars, keyCode, mods, extra = {}) => () => rig.op({ op: "key", window: ctx.win.number, chars, keyCode, mods, ...extra });
   const activate = (id) => S(`S().setSelection(${JSON.stringify(w1)}, []); S().activate(${JSON.stringify(id)}); return true;`);
   const shown = async (ids) => {
+    const tiles = await S(`const s = S(), w = s.windows[${JSON.stringify(w1)}]; return w.tabIds.filter((id) => s.tabs[id].profileId === w.profileId && s.tabs[id].pinned && !s.tabs[id].pinnedAsRow);`);
+    let top = 60;
+    for (const id of tiles) {
+      const r = await rowPoint(rig, w1, id);
+      if (r) top = Math.max(top, r.y + r.height + 6);
+    }
     const out = [];
     for (const id of ids) {
       const r = await rowPoint(rig, w1, id);
-      if (r && r.y > 60 && r.y + r.height < ctx.frame[3] - 70) out.push(id);
+      if (r && r.y > top && r.y + r.height < ctx.frame[3] - 70) out.push(id);
     }
     return out;
   };

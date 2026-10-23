@@ -48,6 +48,7 @@ import { isSmall, mainWindowFor, originalProfile } from "../store/small";
 import { closeLittleArdia, openInMainWindow, openLittleArdia } from "../components/littleArdia/actions";
 import { runPeekCommand } from "../components/peek/actions";
 import { peekTabId } from "../store/peek";
+import { expectFocus, findFocus } from "./focusClaims";
 
 export function runCommand({ command, arg, windowId: requested }: CommandEvent) {
   const s = useBrowser.getState();
@@ -147,8 +148,7 @@ export function runCommand({ command, arg, windowId: requested }: CommandEvent) 
         if (NEW_TAB_BAR_POLICY.closeTabKeyOnlyDismissesBar || !tabId) return;
         return void closeTab(tabId);
       }
-      if (ui?.panel.open) return tabId ? closePanelToHeroBar(windowId, tabId) : s.closePanel(windowId);
-      if (tabId && find?.open) return closeFind(tabId);
+      if (ui?.panel.open) return tabId ? closePanelToHeroBar(windowId, tabId, "closeKey") : s.closePanel(windowId);
       return tabId ? void closeTab(tabId) : undefined;
     case "print":
       return void web?.print();
@@ -172,6 +172,7 @@ export function runCommand({ command, arg, windowId: requested }: CommandEvent) 
     case "copyUrlAsMarkdown":
       return page ? copyText(markdownLink(page.customTitle || page.title, page.url)) : undefined;
     case "findInPage":
+      if (page) expectFocus(windowId, findFocus(page.id));
       return page ? s.setFind(page.id, { open: true, replace: false, focusRequest: Date.now() }) : undefined;
     case "findAndReplace":
       return page ? s.setFind(page.id, { open: true, replace: true, focusRequest: Date.now() }) : undefined;
@@ -314,7 +315,6 @@ function runLittleArdiaCommand(command: string, windowId: string): boolean {
   switch (command) {
     case "closeTab":
       if (s.windowUi[windowId]?.panel.open && tab?.url) s.closePanel(windowId);
-      else if (tabId && s.find[tabId]?.open) closeFind(tabId);
       else closeLittleArdia(windowId);
       return true;
     case "focusCommandBar":
@@ -325,12 +325,6 @@ function runLittleArdiaCommand(command: string, windowId: string): boolean {
       return true;
   }
   return false;
-}
-
-function closeFind(tabId: string) {
-  useBrowser.getState().setFind(tabId, { open: false, count: null, active: 0 });
-  void webviews.get(tabId)?.stopFinding(false);
-  void webviews.get(tabId)?.focus();
 }
 
 async function addBookmarkToFolder(windowId: string, tabId: string, folder: string) {

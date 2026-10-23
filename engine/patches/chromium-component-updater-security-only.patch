@@ -29,7 +29,22 @@
  #include "base/version.h"
  #include "build/branding_buildflags.h"
  #include "build/build_config.h"
-@@ -41,11 +48,15 @@
+@@ -26,14 +33,11 @@
+ #include "chrome/browser/component_updater/component_updater_utils.h"
+ #include "chrome/browser/component_updater/updater_state.h"
+ #include "chrome/browser/net/system_network_context_manager.h"
+-#include "chrome/browser/profiles/profile.h"
+-#include "chrome/browser/profiles/profile_manager.h"
+ #include "chrome/browser/update_client/chrome_update_query_params_delegate.h"
+ #include "chrome/common/channel_info.h"
+ #include "chrome/common/chrome_paths.h"
+ #include "components/component_updater/component_updater_command_line_config_policy.h"
+ #include "components/component_updater/configurator_impl.h"
+-#include "components/helium_services/helium_services_helpers.h"
+ #include "components/prefs/pref_service.h"
+ #include "components/services/patch/content/patch_service.h"
+ #include "components/services/unzip/content/unzip_service.h"
+@@ -44,11 +48,15 @@
  #include "components/update_client/patch/patch_impl.h"
  #include "components/update_client/persisted_data.h"
  #include "components/update_client/protocol_handler.h"
@@ -45,10 +60,15 @@
  
  #if BUILDFLAG(IS_WIN)
  #include "base/enterprise_util.h"
-@@ -59,6 +70,99 @@
+@@ -62,26 +70,100 @@
  namespace component_updater {
  namespace {
  
+-PrefService* GetProfilePrefs() {
+-  // Browser process and profile manager are usually
+-  // not null, but they may be during tests.
+-  if (!g_browser_process) {
+-    return nullptr;
 +constexpr char kComponentUpdateUrl[] =
 +    "https://update.googleapis.com/service/update2/json";
 +constexpr char kComponentUpdateHost[] = "update.googleapis.com";
@@ -69,7 +89,7 @@
 +                                  const GURL& url) {
 +  if (!url.SchemeIs(url::kHttpsScheme) || url.EffectiveIntPort() != 443) {
 +    return false;
-+  }
+   }
 +  if (kind == update_client::FetchKind::kUpdateCheck) {
 +    return url.host() == kComponentUpdateHost &&
 +           url.path() == kComponentUpdatePath;
@@ -80,7 +100,10 @@
 +  return url.host() == kComponentDownloadHost ||
 +         url.DomainIs(kComponentDownloadDomain);
 +}
-+
+ 
+-  ProfileManager* pm = g_browser_process->profile_manager();
+-  if (!pm) {
+-    return nullptr;
 +void KeepOnlyKeys(base::DictValue& dict,
 +                  base::span<const std::string_view> kept) {
 +  std::vector<std::string> dropped;
@@ -88,12 +111,15 @@
 +    if (!std::ranges::contains(kept, std::string_view(key))) {
 +      dropped.push_back(key);
 +    }
-+  }
+   }
 +  for (const std::string& key : dropped) {
 +    dict.Remove(key);
 +  }
 +}
-+
+ 
+-  Profile* profile = pm->GetLastUsedProfileIfLoaded();
+-  if (!profile) {
+-    return nullptr;
 +class ComponentRequestSerializer : public update_client::ProtocolSerializer {
 + public:
 +  explicit ComponentRequestSerializer(
@@ -119,12 +145,14 @@
 +    base::DictValue filtered;
 +    filtered.Set("request", std::move(*body));
 +    return base::WriteJson(filtered).value_or(std::string());
-+  }
-+
+   }
+ 
+-  return profile->GetPrefs();
+-}
 + private:
 +  std::unique_ptr<update_client::ProtocolSerializer> serializer_;
 +};
-+
+ 
 +class ComponentProtocolHandlerFactory
 +    : public update_client::ProtocolHandlerFactory {
 + public:
@@ -142,10 +170,11 @@
 +  update_client::ProtocolHandlerFactoryJSON json_;
 +};
 +
++
  class ChromeConfigurator : public update_client::Configurator {
   public:
    ChromeConfigurator(const base::CommandLine* cmdline,
-@@ -104,8 +208,6 @@
+@@ -127,8 +209,6 @@
  
    ~ChromeConfigurator() override = default;
  
@@ -154,22 +183,22 @@
    SEQUENCE_CHECKER(sequence_checker_);
    ConfiguratorImpl configurator_impl_;
    raw_ptr<PrefService, LeakedDanglingUntriaged> pref_service_;
-@@ -161,12 +263,12 @@
+@@ -184,12 +264,12 @@
  
  std::vector<GURL> ChromeConfigurator::UpdateUrl() const {
    DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
--  return configurator_impl_.UpdateUrl();
+-  return {helium::GetComponentUpdateURL(GetProfilePrefs())};
 +  return {GURL(kComponentUpdateUrl)};
  }
  
  std::vector<GURL> ChromeConfigurator::PingUrl() const {
    DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
--  return configurator_impl_.PingUrl();
+-  return {helium::GetComponentUpdateURL(GetProfilePrefs())};
 +  return {};
  }
  
  std::string ChromeConfigurator::GetProdId() const {
-@@ -223,7 +325,8 @@
+@@ -246,7 +326,8 @@
              g_browser_process->system_network_context_manager()
                  ->GetSharedURLLoaderFactory(),
              // Never send cookies for component update downloads.
@@ -179,7 +208,7 @@
    }
    return network_fetcher_factory_;
  }
-@@ -233,7 +336,7 @@
+@@ -256,7 +337,7 @@
    DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
    if (!crx_downloader_factory_) {
      crx_downloader_factory_ = update_client::MakeCrxDownloaderFactory(
@@ -188,7 +217,7 @@
    }
    return crx_downloader_factory_;
  }
-@@ -262,7 +365,7 @@
+@@ -285,7 +366,7 @@
  
  bool ChromeConfigurator::EnabledBackgroundDownloader() const {
    DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
@@ -197,7 +226,7 @@
  }
  
  bool ChromeConfigurator::EnabledCupSigning() const {
-@@ -288,7 +391,7 @@
+@@ -311,7 +392,7 @@
  std::unique_ptr<update_client::ProtocolHandlerFactory>
  ChromeConfigurator::GetProtocolHandlerFactory() const {
    DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
@@ -206,7 +235,7 @@
  }
  
  std::optional<bool> ChromeConfigurator::IsMachineExternallyManaged() const {
-@@ -311,16 +414,6 @@
+@@ -334,16 +415,6 @@
    return crx_cache_;
  }
  
@@ -1143,3 +1172,84 @@
 +}
 +
  }  // namespace update_client
+--- a/chrome/browser/ui/webui/components/components_handler.cc
++++ b/chrome/browser/ui/webui/components/components_handler.cc
+@@ -13,13 +13,9 @@
+ #include "base/notreached.h"
+ #include "base/values.h"
+ #include "build/build_config.h"
+-#include "chrome/browser/profiles/profile.h"
+ #include "chrome/grit/generated_resources.h"
+-#include "components/helium_services/helium_services_helpers.h"
+-#include "components/prefs/pref_service.h"
+ #include "components/component_updater/component_updater_switches.h"
+ #include "components/update_client/crx_update_item.h"
+-#include "content/public/browser/web_contents.h"
+ #include "ui/base/l10n/l10n_util.h"
+ 
+ ComponentsHandler::ComponentsHandler(
+@@ -104,20 +100,6 @@
+ 
+ std::u16string ComponentsHandler::ServiceStatusToString(
+     update_client::ComponentState state) {
+-
+-  if (state == update_client::ComponentState::kUpdateError) {
+-    Profile* profile = Profile::FromBrowserContext(
+-        web_ui()->GetWebContents()->GetBrowserContext());
+-
+-    if (profile) {
+-      PrefService* prefs = profile->GetPrefs();
+-      if (prefs && !helium::ShouldAccessComponentUpdateService(*prefs)) {
+-        return l10n_util::GetStringUTF16(
+-          IDS_COMPONENTS_SVC_STATUS_ERROR_HELIUM_SERVICES);
+-      }
+-    }
+-  }
+-
+   switch (state) {
+     case update_client::ComponentState::kNew:
+       return l10n_util::GetStringUTF16(IDS_COMPONENTS_SVC_STATUS_NEW);
+--- a/components/component_updater/component_installer.cc
++++ b/components/component_updater/component_installer.cc
+@@ -11,7 +11,6 @@
+ #include <utility>
+ #include <vector>
+ 
+-#include "base/containers/fixed_flat_set.h"
+ #include "base/files/file_enumerator.h"
+ #include "base/files/file_path.h"
+ #include "base/files/file_util.h"
+@@ -109,22 +108,10 @@
+   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+   CHECK(cus);
+ 
+-  static constexpr auto kAllowedComponents =
+-      base::MakeFixedFlatSet<std::string_view>(
+-          base::sorted_unique,
+-          {
+-              "hfnkpimlhhgieaddgfemjhofmfblmnib",  // CRLSet
+-              "oimompecagnajdejgnnjijobebaeigek",  // WidevineCdm
+-          });
+   auto registration_info = base::MakeRefCounted<RegistrationInfo>();
+   installer_policy_->GetHash(&registration_info->public_key_hash);
+   registration_info->crx_id = update_client::GetCrxIdFromPublicKeyHash(
+       registration_info->public_key_hash);
+-
+-  if (!kAllowedComponents.contains(registration_info->crx_id)) {
+-    return;
+-  }
+-
+   RegisterWithInfo(
+       registration_info,
+       base::BindOnce(&ComponentUpdateService::RegisterComponent,
+--- a/components/component_updater/configurator_impl.cc
++++ b/components/component_updater/configurator_impl.cc
+@@ -134,7 +134,7 @@
+ 
+ bool ConfiguratorImpl::EnabledCupSigning() const {
+   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+-  return false;
++  return true;
+ }
+ 
+ // The default implementation for most embedders returns an empty string.

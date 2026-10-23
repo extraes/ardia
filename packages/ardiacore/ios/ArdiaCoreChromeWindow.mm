@@ -14,6 +14,7 @@
 namespace {
 
 BOOL (^gShouldClose)(NSWindow *);
+BOOL (^gRefusesUnhandledKey)(NSWindow *, NSEvent *);
 void (^gSwapped)(NSWindow *, NSWindow *);
 
 NSMapTable<NSWindow *, ArdiaCoreWindowController *> *Controllers() {
@@ -273,8 +274,8 @@ void ConfigureWindow(NSWindow *window) {
 NSSet<NSString *> *ReservedIdentifiers() {
   static NSSet<NSString *> *reserved = [NSSet setWithArray:@[
     @"ardia.command.newTab", @"ardia.command.reopenClosedTab", @"ardia.command.closeTab", @"ardia.command.newWindow",
-    @"ardia.command.newIncognitoWindow", @"ardia.command.tabSwitcher", @"ardia.shortcut.std:closeWindow:",
-    @"ardia.shortcut.std:quit:"
+    @"ardia.command.newIncognitoWindow", @"ardia.command.tabSwitcher", @"ardia.command.nextTab", @"ardia.command.previousTab",
+    @"ardia.shortcut.std:closeWindow:", @"ardia.shortcut.std:quit:"
   ]];
   return reserved;
 }
@@ -1272,7 +1273,7 @@ NSMapTable<ArdiaCoreProfile *, ArdiaCoreWindowController *> *StandaloneWindows()
     }
     [target emit:@"command" payload:@{@"command" : @"escape", @"text" : @""}];
   }
-  return NO;
+  return gRefusesUnhandledKey && gRefusesUnhandledKey(window.window, event);
 }
 
 @end
@@ -1513,10 +1514,6 @@ NSView *ACWindowRootView(NSWindow *window) {
   return [ArdiaCoreEarlyWindow takeDismissed:appWindow];
 }
 
-+ (NSWindow *)makePopupWindowForProfile:(NSString *)profile root:(NSView *)root {
-  return nil;
-}
-
 + (void)showProfile:(NSString *)profile inWindow:(NSWindow *)window {
   ArdiaCoreWindowController *controller = [ArdiaCoreWindowController forNSWindow:window];
   if (!controller) return;
@@ -1588,6 +1585,14 @@ NSView *ACWindowRootView(NSWindow *window) {
 
 + (BOOL)windowShouldClose:(NSWindow *)window {
   return gShouldClose ? gShouldClose(window) : YES;
+}
+
++ (void)setRefusesUnhandledKeyHandler:(BOOL (^)(NSWindow *, NSEvent *))handler {
+  gRefusesUnhandledKey = [handler copy];
+}
+
++ (BOOL (^)(NSWindow *, NSEvent *))refusesUnhandledKeyHandler {
+  return gRefusesUnhandledKey;
 }
 
 + (void)embedRootView:(NSView *)root inWindow:(NSWindow *)window {

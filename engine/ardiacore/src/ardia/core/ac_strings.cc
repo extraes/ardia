@@ -9,6 +9,7 @@
 #include "base/files/file_path.h"
 #include "base/memory/ref_counted_memory.h"
 #include "base/no_destructor.h"
+#include "chrome/grit/branded_strings.h"
 #include "chrome/grit/generated_resources.h"
 #include "ui/base/ui_base_switches.h"
 #include "ui/gfx/image/image.h"
@@ -48,6 +49,10 @@ class Strings : public ui::ResourceBundle::Delegate {
       *value = kManageExtensions;
       return true;
     }
+    if (message_id == IDS_ABOUT_VERSION_COPYRIGHT ||
+        message_id == IDS_ABOUT_VERSION_COMPANY_NAME) {
+      return false;
+    }
     static const bool mangled = base::CommandLine::ForCurrentProcess()->HasSwitch(
         switches::kMangleLocalizedStrings);
     thread_local bool reading = false;
@@ -79,7 +84,7 @@ ui::ResourceBundle::Delegate* ProductStrings() {
 }
 
 bool RenameProduct(std::u16string& text) {
-  static constexpr std::u16string_view kFrom = u"Chromium";
+  static constexpr std::u16string_view kFroms[] = {u"Chromium", u"Helium"};
   static constexpr std::u16string_view kTo = u"Ardia";
   static constexpr std::u16string_view kCredits[] = {u" Authors", u" open source",
                                                      u"</a> open source"};
@@ -93,17 +98,19 @@ bool RenameProduct(std::u16string& text) {
     return false;
   };
   bool renamed = false;
-  for (size_t at = text.find(kFrom); at != std::u16string::npos;
-       at = text.find(kFrom, at)) {
-    const size_t end = at + kFrom.size();
-    if ((at > 0 && Letter(text[at - 1])) ||
-        (end < text.size() && Letter(text[end])) || credit(end)) {
-      at = end;
-      continue;
+  for (std::u16string_view from : kFroms) {
+    for (size_t at = text.find(from); at != std::u16string::npos;
+         at = text.find(from, at)) {
+      const size_t end = at + from.size();
+      if ((at > 0 && Letter(text[at - 1])) ||
+          (end < text.size() && Letter(text[end])) || credit(end)) {
+        at = end;
+        continue;
+      }
+      text.replace(at, from.size(), kTo);
+      at += kTo.size();
+      renamed = true;
     }
-    text.replace(at, kFrom.size(), kTo);
-    at += kTo.size();
-    renamed = true;
   }
   return renamed;
 }

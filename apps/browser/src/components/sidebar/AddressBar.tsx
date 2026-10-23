@@ -14,22 +14,13 @@ import { addressBarInSidebar, setUrlAnchor, SIDEBAR_FIELD } from "../layout/wind
 import { GlassFill, liquidGlass } from "../glass";
 import { useHover } from "../primitives";
 import { GLYPH, HistoryButton, ReloadButton, UrlField, useToolbarTab } from "../Toolbar";
-import { HEADER_TOOLS, navButtonsFitting, type HeaderButton } from "../layout/dockMotion";
+import { ARC_LIGHTS_CENTER, HEADER_TOOLS, navButtonsFitting, type HeaderButton } from "../layout/dockMotion";
 
 const BUTTON = layout.toolbarButton;
-const { toggleX: TOGGLE_X, edge: EDGE, lightsRight: LIGHTS_RIGHT } = HEADER_TOOLS;
-const LIGHTS_Y = 26.75;
-const HIT_TOP = 0;
-const HIT_BOTTOM = SIDEBAR_FIELD.top - 2;
-
-type Slot = { center: number; left: number; right: number };
-function slots(centers: number[], width: number): Slot[] {
-  return centers.map((center, i) => ({
-    center,
-    left: i ? (centers[i - 1]! + center) / 2 : LIGHTS_RIGHT + 1,
-    right: i < centers.length - 1 ? (center + centers[i + 1]!) / 2 : width - 2,
-  }));
-}
+const { toggleX: TOGGLE_X, edge: EDGE } = HEADER_TOOLS;
+const LIGHTS_Y = ARC_LIGHTS_CENTER[1];
+const PLATE = 32;
+const PLATE_RADIUS = 6;
 
 export function SidebarHeaderTools({ width }: { width: number }) {
   const windowId = useWindowId();
@@ -40,10 +31,10 @@ export function SidebarHeaderTools({ width }: { width: number }) {
   const shown = tab ? buttons : [];
   const last = width - EDGE - BUTTON / 2;
   const centres = shown.map((_, i) => last - (shown.length - 1 - i) * step);
-  const at = slots(toggle ? [TOGGLE_X, ...centres] : centres, width);
-  const place = (s: Slot) => ({
-    style: { position: "absolute" as const, top: HIT_TOP, left: s.left },
-    hit: { width: s.right - s.left, height: HIT_BOTTOM - HIT_TOP, plateX: s.center - BUTTON / 2 - s.left, plateY: LIGHTS_Y - BUTTON / 2 - HIT_TOP },
+  const at = toggle ? [TOGGLE_X, ...centres] : centres;
+  const place = (center: number) => ({
+    style: { position: "absolute" as const, top: LIGHTS_Y - PLATE / 2, left: center - PLATE / 2 },
+    hit: { width: PLATE, height: PLATE, plateX: 0, plateY: 0, box: PLATE, radius: PLATE_RADIUS },
   });
   return (
     <>

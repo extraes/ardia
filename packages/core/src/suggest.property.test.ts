@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { bangTable } from "./bangs.ts";
 import { BUILT_IN_ENGINES } from "./engines.ts";
 import { buildSuggestions, prepareSuggestions, type SuggestionSource, type SuggestOptions } from "./suggest.ts";
 import * as reference from "./suggest.reference.ts";
@@ -65,6 +66,7 @@ function sequence(r: Rng, p: ReturnType<typeof makeProfile>): string[] {
   if (r.int(8) === 0) target = ` ${target} `;
   if (r.int(12) === 0) target = `?${target}`;
   if (r.int(12) === 0) target = `${r.pick(["yt", "gh", "g"])} ${target}`;
+  if (r.int(8) === 0) target = r.int(2) ? `${r.pick(["!gh", "!W", "!nope", "!"])} ${target}` : `${target} ${r.pick(["!w", "!yt", "!", "!gh"])}`;
   const out: string[] = [];
   const upTo = Math.min(target.length, 4 + r.int(24));
   for (let i = 1; i <= upTo; i++) out.push(target.slice(0, i));
@@ -87,7 +89,9 @@ function sequence(r: Rng, p: ReturnType<typeof makeProfile>): string[] {
   return out;
 }
 
-const stats = { steps: 0, completions: 0, pages: 0 };
+const BANGS = bangTable("gh git\tGitHub\tgithub.com/search?q={s}\nw wiki\tWikipedia\twikipedia.org/w/index.php?search={s}\nyt\tYouTube\twww.youtube.com/results?search_query={s}");
+
+const stats = { steps: 0, completions: 0, pages: 0, bangs: 0 };
 
 function compareRun(seed: number, size: number) {
   const r = rng(seed);
@@ -103,6 +107,7 @@ function compareRun(seed: number, size: number) {
     currentUrl: r.int(3) ? undefined : (p.history[r.int(Math.max(1, p.history.length))]?.url ?? undefined),
     scope,
     preventInline: r.int(6) === 0,
+    bangs: r.int(4) ? BANGS : null,
   };
   const other = makeProfile(rng(seed + 100_000), size);
   let source: SuggestionSource = p;
@@ -133,6 +138,7 @@ function compareRun(seed: number, size: number) {
     const got = buildSuggestions(q, source, options);
     stats.steps++;
     if (want.completion) stats.completions++;
+    if (want.items.some((x) => x.kind === "search" && x.bang)) stats.bangs++;
     stats.pages += want.items.filter((x) => x.kind === "page").length;
     assert.deepStrictEqual(got, want, `seed ${seed} size ${size} step ${i} query ${JSON.stringify(q)}`);
   }
@@ -147,7 +153,7 @@ test("big profiles too, and a stale narrowing never leaks across profiles", () =
 });
 
 test("the sequences exercise inline completion and page rows", () => {
-  assert.ok(stats.steps > 5000 && stats.completions > 300 && stats.pages > 10000, JSON.stringify(stats));
+  assert.ok(stats.steps > 5000 && stats.completions > 300 && stats.pages > 10000 && stats.bangs > 100, JSON.stringify(stats));
 });
 
 test("an empty profile and a one-row profile", () => {

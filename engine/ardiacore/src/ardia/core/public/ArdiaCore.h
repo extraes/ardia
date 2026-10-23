@@ -314,6 +314,7 @@ ARDIACORE_EXPORT
 - (void)resolveUnresponsive:(BOOL)terminate;
 @property(nonatomic, nullable) NSColor* pageBackgroundColor;
 @property(nonatomic, copy, nullable) NSString* pageColor;
+@property(nonatomic, nullable) NSColor* contentsBackgroundColor;
 - (NSString*)executeExtensionAction:(NSString*)extensionId;
 - (NSDictionary<NSString*, NSDictionary*>*)actionStatesForExtensions:(NSArray<NSString*>*)extensionIds;
 - (nullable NSString*)sidePanelURLForExtension:(NSString*)extensionId;

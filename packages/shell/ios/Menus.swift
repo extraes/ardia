@@ -199,13 +199,47 @@ final class MenuTarget: NSObject, NSMenuItemValidation {
   static let shared = MenuTarget()
   var handler: ((String, String?, String?) -> Void)?
 
+  private static let focusMovingCommands: Set<String> = ["newTab", "focusCommandBar", "findInPage"]
+
   @objc(commandDispatch:) func performCommand(_ sender: NSMenuItem) {
     guard let item = sender as? CommandItem else { return }
+    _ = FocusHandoff.shared.takeBegun()
+    if Self.focusMovingCommands.contains(item.command) || FocusHandoff.shared.gatesKeyWindow, let window = NSApp.keyWindow {
+      FocusHandoff.shared.begin(in: window)
+    }
     handler?(item.command, item.arg, item.windowless ? nil : WindowManager.shared.keyWindowId)
     if item.command == "tabSwitcher" { SwitcherHold.opened(by: item) }
   }
 
+  @objc(cut:) func cutEdit(_ sender: Any?) { forwardEdit(#selector(NSText.cut(_:)), from: sender) }
+  @objc(copy:) func copyEdit(_ sender: Any?) { forwardEdit(#selector(NSText.copy(_:)), from: sender) }
+  @objc(paste:) func pasteEdit(_ sender: Any?) { forwardEdit(#selector(NSText.paste(_:)), from: sender) }
+  @objc(selectAll:) func selectAllEdit(_ sender: Any?) { forwardEdit(#selector(NSText.selectAll(_:)), from: sender) }
+
+  private func forwardEdit(_ action: Selector, from sender: Any?) {
+    if FocusHandoff.shared.defers(action) { return }
+    FocusHandoff.shared.noteForwarded(action)
+    NSApp.sendAction(action, to: nil, from: sender)
+  }
+
+  private static func validateForwarded(_ menuItem: NSMenuItem, _ action: Selector) -> Bool {
+    guard let target = NSApp.target(forAction: action) as? NSObject else { return false }
+    typealias Validate = @convention(c) (AnyObject, Selector, NSMenuItem) -> ObjCBool
+    for name in ["validateMenuItem:", "validateUserInterfaceItem:"] {
+      let validate = NSSelectorFromString(name)
+      if target.responds(to: validate) {
+        return unsafeBitCast(target.method(for: validate), to: Validate.self)(target, validate, menuItem).boolValue
+      }
+    }
+    return true
+  }
+
   func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+    if let action = menuItem.action, FocusHandoff.editActions.contains(action), FocusHandoff.shared.gatesKeyWindow { return true }
+    if let action = menuItem.action, FocusHandoff.editActions.contains(action), !(menuItem is CommandItem),
+      action != #selector(pasteAndMatchStyle(_:)) {
+      return Self.validateForwarded(menuItem, action)
+    }
     if menuItem.action == #selector(closeWindow(_:)) { return WindowManager.shared.closableWindow != nil }
     if menuItem.action == #selector(toggleKeepOnTop(_:)) {
       guard let window = WindowManager.shared.keyBrowserWindow else { return false }
@@ -231,6 +265,7 @@ final class MenuTarget: NSObject, NSMenuItemValidation {
 
   @objc func pasteAndMatchStyle(_ sender: Any?) {
     let web = Selector(("pasteAndMatchStyle:"))
+    if FocusHandoff.shared.defers(web) { return }
     if NSApp.target(forAction: web) != nil {
       NSApp.sendAction(web, to: nil, from: sender)
     } else {
@@ -334,18 +369,23 @@ enum MainMenu {
 
     let paste = std("Paste and Match Style", #selector(MenuTarget.pasteAndMatchStyle(_:)), "v", [.command, .shift])
     paste.target = MenuTarget.shared
+    let edits = [
+      std("Cut", #selector(NSText.cut(_:)), "x"), std("Copy", #selector(NSText.copy(_:)), "c"),
+      std("Paste", #selector(NSText.paste(_:)), "v"), std("Select All", #selector(NSText.selectAll(_:)), "a"),
+    ]
+    edits.forEach { $0.target = MenuTarget.shared }
     _ = top("Edit", [
       std("Undo", Selector(("undo:")), "z"),
       std("Redo", Selector(("redo:")), "z", [.command, .shift]),
       .separator(),
-      std("Cut", #selector(NSText.cut(_:)), "x"),
-      std("Copy", #selector(NSText.copy(_:)), "c"),
+      edits[0],
+      edits[1],
       cmd("Copy URL", "copyUrl", "c", [.command, .shift]),
       cmd("Copy URL as Markdown", "copyUrlAsMarkdown", "c", [.command, .option, .shift]),
-      std("Paste", #selector(NSText.paste(_:)), "v"),
+      edits[2],
       paste,
       std("Delete", #selector(NSText.delete(_:))),
-      std("Select All", #selector(NSText.selectAll(_:)), "a"),
+      edits[3],
       .separator(),
       sub("Find", [
         cmd("Find…", "findInPage", "f"),

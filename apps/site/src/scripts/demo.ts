@@ -91,7 +91,7 @@ function renderControls(frame: HTMLIFrameElement, controls: Control[], target: H
         const el = button(control);
         el.addEventListener("click", () => {
           root?.setAttribute("data-engaged", "");
-          if (control.id === "command") frame.focus();
+          if (control.id === "command" || control.id === "newTab") frame.focus();
           frame.contentWindow?.postMessage({ type: "ardia-demo:control", id: control.id }, "*");
         });
         actions.append(el);

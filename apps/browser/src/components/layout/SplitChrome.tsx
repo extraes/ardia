@@ -9,6 +9,7 @@ import { resize, type Divider, type Rect } from "./geometry";
 import { useHover } from "../primitives";
 import { hideToast, useToasts } from "./splitActions";
 import { useWindowId } from "../../store/hooks";
+import { overPeek } from "./dockMotion";
 import { zoneHit, zoneRect, type ZoneStage } from "./splitDrop";
 import { setDropTarget, setOnPage, setTargetResolver, useTabDrag } from "./tabDrag";
 
@@ -108,7 +109,7 @@ export function DropTargets({ panes, origin }: { panes: Record<string, Rect>; or
 
   const px = origin ? x - origin.x : -1;
   const py = origin ? y - origin.y : -1;
-  const overPage = !!origin && x >= 0 && Object.values(panes).some((r) => px >= r.x && px <= r.x + r.width && py >= r.y && py <= r.y + r.height);
+  const overPage = !!origin && x >= 0 && !overPeek(windowId, x) && Object.values(panes).some((r) => px >= r.x && px <= r.x + r.width && py >= r.y && py <= r.y + r.height);
   const shown = !!dragging && !!origin && !full && !outside && candidates.length > 0 && (lifted ?? overPage);
   const [grown, setGrown] = useState(false);
   useEffect(() => {
@@ -126,7 +127,7 @@ export function DropTargets({ panes, origin }: { panes: Record<string, Rect>; or
     if (!dragging) return;
     setTargetResolver((x, y, current, outside) => {
       const { candidates, origin, panes, ready } = resolver.current;
-      if (!ready || outside || !origin) return null;
+      if (!ready || outside || !origin || overPeek(windowId, x)) return null;
       const px = x - origin.x, py = y - origin.y;
       if (!Object.values(panes).some((r) => px >= r.x && px <= r.x + r.width && py >= r.y && py <= r.y + r.height)) return null;
       return zoneHit(candidates, px, py, current);

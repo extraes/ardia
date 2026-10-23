@@ -20,7 +20,6 @@ let timerAt = Infinity;
 let clock = () => Date.now();
 let separate: boolean | null = null;
 let firing = false;
-let rescheduleAfterFiring = false;
 
 const separateTimers = () => (separate ??= killSwitchEnvironment("ARDIA_SLOW_TIMERS") === "separate");
 
@@ -51,10 +50,7 @@ export function everySlowly(job: SlowJob): Unsubscribe {
 }
 
 export function reschedule() {
-  if (firing) {
-    rescheduleAfterFiring = true;
-    return;
-  }
+  if (firing) return;
   const now = clock();
   let next = Infinity;
   for (const job of jobs) {
@@ -91,7 +87,6 @@ function fire() {
     }
   } finally {
     firing = false;
-    rescheduleAfterFiring = false;
   }
   reschedule();
 }

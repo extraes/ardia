@@ -29,6 +29,9 @@ enum ChromeWindows {
     closeHandlerInstalled = true
     let handler: @convention(block) (NSWindow) -> Bool = { WindowManager.shared.windowShouldClose($0) }
     (host as AnyObject).setValue(handler, forKey: "shouldCloseHandler")
+    guard (host as AnyObject).responds(to: NSSelectorFromString("setRefusesUnhandledKeyHandler:")) else { return }
+    let refuses: @convention(block) (NSWindow, NSEvent) -> Bool = { FocusHandoff.shared.refusesUnhandledKey($1, in: $0) }
+    (host as AnyObject).setValue(refuses, forKey: "refusesUnhandledKeyHandler")
   }
 
   static func takeDismissed(appWindow: String) -> Bool {

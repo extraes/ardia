@@ -1,5 +1,4 @@
-import { useShallow } from "zustand/react/shallow";
-import { useBrowser, type BrowserState } from "../../store/browser";
+import type { BrowserState } from "../../store/browser";
 import { activeTabId, viewTabIds } from "../../store/model";
 import { hiddenEmptyCard } from "../../store/newTabBar";
 import { splitIndex, stableList } from "../../store/structure";
@@ -100,9 +99,3 @@ function splitEntry(s: BrowserState, tabId: string, splits = splitIndex(s.splits
   }
   return `t:${tabId}`;
 }
-
-export function useSidebarEntries(windowId: string, profileId?: string): SidebarEntries {
-  return useBrowser((s) => sidebarEntries(s, windowId, profileId));
-}
-
-export const useGroupEntries = (groupId: string) => useBrowser(useShallow((s) => groupEntries(s, groupId)));

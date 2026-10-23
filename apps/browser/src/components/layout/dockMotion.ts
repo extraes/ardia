@@ -25,12 +25,16 @@ export function springAt(
 }
 
 export const LIGHTS_CENTER: readonly [number, number] = [25, 27];
+export const ARC_LIGHTS_CENTER: readonly [number, number] = [25, 24];
+export const TOP_STRIP_LIGHTS_CENTER: readonly [number, number] = [20.75, 20.75];
 
-export const PEEK_ORIGIN: readonly [number, number] = [6, 6];
+export const PEEK_ORIGIN: readonly [number, number] = [5, 5];
+export const PEEK_BOTTOM = 5;
+export const PEEK_RADIUS = 12;
 
-export function lightsCenter(offset: number, down = 0): [number, number] | null {
+export function lightsCenter(offset: number, down = 0, base: readonly [number, number] = LIGHTS_CENTER): [number, number] | null {
   const dx = Math.round(offset * 2) / 2;
-  return dx === 0 && down === 0 ? null : [LIGHTS_CENTER[0] - dx, LIGHTS_CENTER[1] + down];
+  return dx === 0 && down === 0 && base === LIGHTS_CENTER ? null : [base[0] - dx, base[1] + down];
 }
 
 export const cardLeft = (dock: number, width: number, inset: number) => inset + (width - inset) * dock;
@@ -49,9 +53,10 @@ export function setDockMoving(windowId: string, moving: boolean) {
   });
 }
 
-const peeking = new Set<string>();
-export const setPeekShown = (windowId: string, shown: boolean) => void (shown ? peeking.add(windowId) : peeking.delete(windowId));
+const peeking = new Map<string, number>();
+export const setPeekShown = (windowId: string, shown: boolean, rightEdge = 0) => void (shown ? peeking.set(windowId, rightEdge) : peeking.delete(windowId));
 export const peekShown = (windowId: string) => peeking.has(windowId);
+export const overPeek = (windowId: string, x: number) => x < (peeking.get(windowId) ?? -Infinity);
 export const devPeeks: Record<string, { show(): void; hide(): void }> = {};
 
 export const HEADER_TOOLS = { toggleX: 70.75 + 27, pitch: 35, edge: 7, lightsRight: 70.75 + 7 } as const;

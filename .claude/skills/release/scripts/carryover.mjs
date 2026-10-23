@@ -48,7 +48,29 @@ async function inPage(urlPart, expression) {
   }
   return `(no page ${urlPart})`;
 }
+const UBO = "fajbdaomknpkicfjcpipdmcpoamdmilh";
 const window = `Object.keys(ac.store.getState().windows)[0]`;
+async function inUbo(body) {
+  const expression = `(async () => { const send = (m) => vAPI.messaging.send("dashboard", m); ${body} })()`;
+  const url = `chrome-extension://${UBO}/1p-filters.html`;
+  const tab = await inApp(`const s = ac.store.getState(), w = ${window}; ac.actions.switchProfile(w, "default"); const id = s.newTab(w, { url: ${JSON.stringify(url)}, profileId: "default" }); ac.actions.switchToTab(id); return id;`);
+  try {
+    for (let i = 0; i < 20; i++) {
+      await sleep(1500);
+      const page = await instance.page(`${UBO}/1p-filters.html`, { timeout: 0 }).catch(() => null);
+      const v = page ? await page.send("Runtime.evaluate", { expression, returnByValue: true, awaitPromise: true }, { timeout: 20_000 }).then((r) => r?.result?.value, () => undefined) : undefined;
+      page?.close();
+      if (v !== undefined) return v;
+    }
+  } finally {
+    await inApp(`ac.store.getState().closeTab(${JSON.stringify(tab)}); return 1;`).catch(() => {});
+    await sleep(1000);
+  }
+  return "(uBO's dashboard didn't answer)";
+}
+const READ_UBO = `const f = await send({ what: "readUserFilters" }); const u = await send({ what: "userSettings" }); const w = await send({ what: "getWhitelist" });
+  return { filters: f && f.content, filtersOn: f && f.enabled, advancedUser: u && u.advancedUserEnabled, trusted: w && w.whitelist.filter((h) => /carryover/.test(h)) };`;
+const READ_SETTINGS = `const t = ac.store.getState().settings; return { appearance: t.appearance, sidebarWidth: t.sidebarWidth, newTabPosition: t.newTabPosition };`;
 const show = (pattern) => inApp(`const s = ac.store.getState(); const t = Object.values(s.tabs).find((t) => ${pattern}.test(t.url));
   if (t) { ac.actions.switchProfile(${window}, t.profileId); ac.actions.switchToTab(t.id); } return !!t;`);
 
@@ -97,6 +119,10 @@ try {
         .then(() => C.setSiteSetting("", O, "notifications", "allow"))
         .then(() => C.setZoom("", "127.0.0.1", 1.5))
         .then(() => globalThis.expo.modules.ArdiaExtensions.install(${JSON.stringify(extra)}, ""));`, 60_000);
+    report.madeUbo = await inUbo(`await send({ what: "writeUserFilters", content: "||carryover-ads.example^\\n##.carryover-banner", enabled: true, trusted: false });
+      await send({ what: "userSettings", name: "advancedUserEnabled", value: true });
+      const w = await send({ what: "getWhitelist" }); await send({ what: "setWhitelist", whitelist: w.whitelist.concat("carryover.example").join("\\n") }); return 1;`);
+    await inApp(`ac.store.getState().updateSettings({ appearance: "dark", sidebarWidth: 244, newTabPosition: "bottom" }); return 1;`);
     await sleep(4000);
   }
   if (phase === "use") {
@@ -113,6 +139,8 @@ try {
     await sleep(4000);
   }
   report.read = await inApp(READ, 90_000);
+  report.read["Personal uBlock Origin"] = await inUbo(READ_UBO);
+  report.read["settings"] = await inApp(READ_SETTINGS);
   if (phase === "use" || phase === "back") {
     await show("/page3/"); await sleep(2500);
     report.read["New build page"] = await inPage("page3.html", `document.cookie + "; localStorage " + localStorage.getItem("n_ls")`);
@@ -150,6 +178,8 @@ if (phase === "create") {
     "Personal addresses": '["Ada Lovelace, London"]', "Personal notifications": '"allow"', "Personal zoom": '{"127.0.0.1":1.5}',
     "Personal extensions": '["ArdiaCore spike extension"]',
     "Personal page": '"p_persist=yes; p_session=yes; localStorage yes"', "Work page": '"w_persist=yes; w_session=yes; localStorage yes"',
+    "Personal uBlock Origin": '{"filters":"||carryover-ads.example^\\n##.carryover-banner","filtersOn":true,"advancedUser":true,"trusted":["carryover.example"]}',
+    "settings": '{"appearance":"dark","sidebarWidth":244,"newTabPosition":"bottom"}',
   };
   const wrong = Object.entries(want).filter(([k, v]) => JSON.stringify(r[k]) !== v).map(([k]) => `${k}: ${JSON.stringify(r[k])}`);
   if (!(r["Personal history"] ?? []).includes(`${origin}/page1.html`) || !(r["Work history"] ?? []).includes(`${origin}/work.html`)) wrong.push("history");

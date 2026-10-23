@@ -6,7 +6,7 @@ import { isEmptyCardTab, NEW_TAB_BAR_POLICY, newTabOpensBar } from "../../store/
 import { isSmall } from "../../store/small";
 import type { NewTabTarget } from "../../store/types";
 
-export { isEmptyCardTab, newTabOpensBar };
+export { isEmptyCardTab };
 
 const store = () => useBrowser.getState();
 const IN_LIST: NewTabTarget = { kind: "list" };

@@ -1,8 +1,9 @@
 # Building the engine from source
 
 Ardia runs on ArdiaCore: Chrome's own framework (`//chrome:chrome_framework`) built from our Chromium tree, with our
-layers linked in (`docs/ardiacore-spike.md`). The tree is plain **Chromium 155.0.8059.84** (`CHROMIUM_VERSION` in
-`env.sh`), then ungoogled-chromium, then our patch series. Nothing of CEF's is checked out or built. CEF left the tree
+layers linked in (`docs/ardiacore-spike.md`). The tree is **Chromium 155.0.8059.84** (`CHROMIUM_VERSION` in
+`env.sh`), plus **Helium** 0.19.4 (helium-chromium) and 0.19.4.1 (helium-macos) minus a short skip list, then our
+patch series. Nothing of CEF's is checked out or built. CEF left the tree
 on 2026-10-09: its 117 patches to Chrome are gone, except a few kept as `chromium-cef-carryover.patch`
 ([below](#cefs-117-patches)), and the seams of theirs ArdiaCore used are our own hooks H1–H6
 ([below](#our-hooks-in-chromes-code)). The framework is still named "Chromium Framework". Crashpad stays off.
@@ -12,18 +13,28 @@ What the build adds:
 - **H.264 / AAC.** Set with `proprietary_codecs=true` and `ffmpeg_branding="Chrome"`; H.264 decodes
   through VideoToolbox.
 - **Chrome's release optimisations**, as Helium ships them: an official build with ThinLTO and PGO (Chromium's own
-  mac-arm profile). See [Helium](#helium) for what else came from Helium and what didn't.
-- **ungoogled-chromium** 155.0.8059.84-1 (macOS 155.0.8059.39-1.1). Its patch series and domain substitution strip
-  Google background services; see [ungoogled-chromium](#ungoogled-chromium). The Chrome Web Store and
-  extension auto-updates are deliberately kept working.
+  mac-arm profile).
+- **Helium** (`HELIUM_TAG` and `HELIUM_MACOS_TAG` in `env.sh`, pinned by commit in `helium-pins.ini`). It is built on
+  ungoogled-chromium: its series, domain substitution and name substitution strip Google's background services and
+  rename the product, and we rename it again, to Ardia. Helium's own services stay off, and the Chrome Web Store,
+  extension updates and the security components still reach Google. See [Helium](#helium).
 - **Our patches**, in `engine/patches/`, applied in the order `engine/patches/series` gives (see
   [The patch series](#the-patch-series)):
 
 | Patch | What it does |
 |---|---|
+| `chromium-helium-branding.patch` | First in the series: Helium shows as Ardia, and its services, update feed and crash server can't be reached, for the literals in source that name substitution and `ardia_resources.txt` don't reach. `helium::ShouldAccessServices` is false whatever the prefs say, and both services origins are the unresolvable `services-disabled.qjz9zk`; the update feed and the crash upload URL are empty (no switch sets one) and the crash product is Ardia. Helium's internal-page scheme alias isn't registered, rewritten or shown (the engine shows chrome://, the app shows ardia://). Extension update pings go to no domain (they did to helium.computer). chrome://credits names Ardia and its repository and keeps Helium's GPL-3.0 entry; chrome://crashes files bugs on Ardia's tracker; the Safari import dialog loses its link to Helium's wiki; screenshots save as `ardia_screenshot*.png` and the Web Store's button says "Add to Ardia"; chrome://flags says Ardia, Helium's flag ids are `ardia-*` and the updater channel and update server flags are gone. `cr:chrome-product` is Ardia's mark, Helium's indigo palette is reverted (`helium-color-scheme`), the onboarding and uBlock paks aren't packed or registered, and `chrome/app/theme/chromium/BRANDING` is Chromium's again (Ardia builds with its own, `chromium-branding.patch`) |
 | `chromium-cef-carryover.patch` | The CEF patches we keep ([CEF's 117 patches](#cefs-117-patches)): `BrowserManagerService::DeleteBrowser`'s destruction order, no `NOTREACHED` for unmapped Mac key codes, bubbles kept on screen on the Mac (`kAdjustBubbleIfOffscreen`), a window with a child-modal sheet resizable and the sheet's focus back after the resize, the ResourceBundle delegate parameter H5 passes to `LoadLocalState`, the tab strip API's colour provider without an active tab, and `browser_tests` building without background mode (for `enable_background_mode=false`) |
 | `chromium-extension-window-hidden.patch` | The windows of ArdiaCore's own pages are invisible to chrome.windows/tabs (`g_ardia_hidden_from_extensions`, also read by the next patch and apply.sh's `browser_window_util` hook): not listed, not found by id (`ExtensionTabUtil::GetTabById` and `GetControllerInProfileWithId`, so tabs.get/update/remove, scripting and tabs.sendMessage on a leaked id fail as for a closed tab), no tabs events (`TabsEventRouter::ShouldTrackBrowser`) and no webNavigation events for their tabs, or for tabs they open |
 | `chromium-component-extension-restricted-urls.patch` | Chrome lets every `kComponent` extension script any page (`PermissionsData::CanExecuteScriptEverywhere`), Web Store included. For the component extensions Ardia bundles (`g_ardia_restricted_component_extension`, set in every process by `ACMainDelegate`: uBlock Origin's id), `IsRestrictedUrl` makes Chrome's usual checks anyway: no scripts on the Web Store, chrome:// pages or other extensions' pages. Nothing else about `kComponent` changes |
+| `chromium-helium-ublock-off.patch` | Helium's uBlock Origin component (`blockjmkbacgjkknlgpkjjiijinjdanf`) is neither built nor loaded, and isn't pinned by default: no `AddUBlock`, no `//third_party/ublock` deps, grit headers or resource entries (the branding patch drops its pak). Ardia runs its own uBO (`fajbdaomknpkicfjcpipdmcpoamdmilh`), so users keep their filters and two engines don't filter every request |
+| `chromium-helium-onboarding-off.patch` | Helium's onboarding page (chrome://setup) isn't built: no WebUI target, resources, strings, chrome://chrome-urls entry or first-run opener (the branding patch drops its pak and registration), so Helium's services consent stays off. chrome://credits keeps Helium's GPL-3.0 entry with its licence text in `third_party/helium/LICENSE`, and leaves out the onboarding font |
+| `chromium-helium-services-page-off.patch` | Settings has no Helium services page: no route, no view, no "set up services" button opening chrome://setup. Helium services stay off in Ardia (the branding patch, which also removes its row), so it only offered switches that do nothing |
+| `chromium-helium-search-assets-off.patch` | Built-in search provider assets are on only for Chrome-branded builds again (Helium turns them on; `enable_builtin_search_provider_assets` in `chrome_build.gni` isn't a GN argument): the build doesn't fetch Helium's non-free search engine assets |
+| `chromium-helium-bangs-off.patch` | Helium's `BangManager` (add-native-bangs) never fetches: `LoadBangs` answers at once with no bangs, so no loader is made and nothing is requested (it made a cache-only request to the services-disabled placeholder at every launch). Chromium's omnibox never uses bangs in Ardia; the address bar is the app's own (`packages/core`) |
+| `chromium-helium-rlz-for-cdm-storage-id.patch` | `enable_rlz` can be true again (`gn_defines.sh` sets it): it reverts the `rlz/buildflags/buildflags.gni` hunk of the `disable-rlz` patch Helium applies, as our ungoogled build did. Widevine's CDM storage id (`enable_cdm_storage_id`) hashes RLZ's machine id on the Mac, so every user's storage ids and licences stay the same. RLZ itself stays inert: there's no brand code |
+| `chromium-helium-ntp-third-party.patch` | chrome://newtab opens the New Tab page Ardia 0.2.39 did: chrome://new-tab-page-third-party unless Google is the default search engine. It reverts the `search.cc` hunks of Helium's `always-use-better-ntp`, which sent every engine to Chrome's WebUI NTP (it needs a BrowserView, which ArdiaCore's browsers lack), and puts back the `search.cc` part of ungoogled's `0008-restore-classic-ntp`, which Helium leaves out |
+| `chromium-helium-context-menu-cast.patch` | The page's context menu keeps Cast…, as in 0.2.39: it reverts the `AppendPageItems` hunk of Helium's `degoogle-context-menu`. Cast works through `chromium-cast-dialog-hook.patch`, with mDNS on |
 | `chromium-password-bubble-hook.patch` | ArdiaCore may replace Chrome's password bubble (`g_ardia_password_bubble`) |
 | `chromium-extension-install-prompt-hook.patch` | ArdiaCore may replace Chrome's extension install dialog (`g_ardia_extension_install_prompt`) |
 | `chromium-branding.patch` | Ardia's bundle and team id (`branding_file_path`), for the passkey and payments keychain access groups; product names stay "Chromium" |
@@ -31,10 +42,12 @@ What the build adds:
 | `chromium-device-chooser-hook.patch` | `chrome::ShowDeviceChooserDialog` (and its extension-page variant) asks ArdiaCore (`g_ardia_device_chooser`) once Chrome's `DropFullscreenForChooserDialog` has dropped the page's full screen and revalidated the frame and active tab: ArdiaCore gets that WebContents and the full-screen blocker, which its chooser holds until it closes |
 | `chromium-cast-dialog-hook.patch` | The Media Router's Cast dialog (and Presentation API requests) asks ArdiaCore first (`g_ardia_wants_cast_dialog`, `g_ardia_cast_dialog`). Both paths reach `CreateMediaRouterDialog`, which asks ArdiaCore only after Chrome's `ForSecurityDropFullscreen` has dropped the page's full screen and the window has survived the drop; ArdiaCore gets the full-screen blocker and its Cast dialog (`ac_cast_dialog.mm`) holds it until it closes, so a page can't re-enter full screen over the picker |
 | `chromium-side-panel-hook.patch` | `side_panel_util` asks ArdiaCore first for an extension's side panel (`g_ardia_extension_side_panel`) |
+| `chromium-ntp-promo-without-side-panel.patch` | `NewTabPageFeaturePromoHelper::MaybeTriggerAutomaticCustomizeChromePromo` returns when the tab's browser has no `SidePanelUI`, which ArdiaCore's browsers don't: Chrome's WebUI New Tab page crashed the browser (`SIGSEGV`) there on Helium |
 | `chromium-initial-document-access.patch` | When another frame touches a tab's initial empty document (`RenderFrameHostImpl::DidAccessInitialMainDocument`, primary frame tree), ArdiaCore hears it (`g_ardia_initial_main_document_accessed`): the tab sends a URL and navigation-state change, as Chrome's omnibox stops showing the pending URL then. `content::ArdiaHasAccessedInitialMainDocument` answers `WebContentsImpl::HasAccessedInitialDocument`, which 155 no longer has on the public `WebContents`; `ArdiaCoreTab.initialDocumentAccessed` and `.committedInitial` (the last committed entry is the initial one) report them |
 | `chromium-hidden-window-current-window.patch` | Extension pages in hidden windows (our popups and side panels) take the last active window as their current window |
-| `chromium-extension-updates.patch` | Undoes ungoogled's early `return` in `UpdateCheckerImpl::CheckForUpdates`, which left every update check pending: Web Store extensions never updated |
-| `chromium-component-updater-security-only.patch` | The component updater fetches only the security components: CRLSet (`hfnkpimlhhgieaddgfemjhofmfblmnib`), PKI Metadata (`efniojlnjndmcbiieegkicadnoecjjef`: CT log list, Chrome Root Store, pins) and the SSL error assistant (`giekcmmlnklenlaomppkphknjmnnpneh`). `CrxUpdateService::GetCrxComponents` hands update_client no data for any other id, so scheduled and on-demand checks leave them out of the request; they stay registered, so a bundled or installed copy still loads, and a check of one ends in "Update error" without a request. `ChromeConfigurator` (the component updater's alone; the extension updater keeps its own) checks `https://update.googleapis.com/service/update2/json` with no override and no http fallback (`kUpdaterJSONDefaultUrl` stays substituted: the extension updater's pings read it), sends no pings, and downloads in Chrome's network stack only (no background cache, so no NSURLSession). Its fetcher gets a destination policy (`NetworkFetcherChromiumFactory`'s `AllowedDestinationPredicate`, null for the extension updater): the update check may go only to that URL, downloads only to https `dl.google.com` or `*.gvt1.com` (any path) or `www.google.com/dl/` (port 443), checked on the first URL and on every redirect, so the server's http mirrors fail over to the https ones and a redirect elsewhere stops before it is followed; an empty request body is refused. Its requests keep only an allowlist of fields: `protocol`, `ismachine`, `dedup`, `acceptformat`, `sessionid`, `requestid` (both random per check), `@updater`, `prodversion`, `updaterversion`, `@os`, `arch`, `os`, the channels, and per component `appid`, `version` and `updatecheck`. The persisted fields Chrome uses to tie one check to the next stay out (`ping` with its `ping_freshness` UUID and day counts, `cohort*`, `installdate`, `iid`, `brand`, `cached_items`), and so do `lang`, `hw`, `dlpref`, `domainjoined` and `updaters`; the source IP address and the versions sent can still let Google correlate checks. CUP signing of the response and CRX3 publisher-proof and key-hash checks are Chrome's, unchanged. Since PKI Metadata replaces the compiled Chrome Root Store with any newer one, a root we distrust must also be in `kSPKIBlockList` (as eMudhra's is, `chromium-emudhra-distrust.patch`): that list joins every CRLSet, downloaded or built in |
+| `chromium-webstore-direct.patch` | Web Store installs and extension updates go straight to Google, as before Helium. It reverts what Helium's `proxy-extension-downloads` and `spoof-extension-downloader-platform` and ungoogled's `disable-webstore-urls` do (Helium's later patches need them, so they can't be skipped): the store update URL is `clients2.google.com` again (Helium's proxy needs onboarding consent, so every install and update went to a dummy host), pending installs (sync ones included), effective update URLs, the standalone installer and `ExtensionUpdater` (the update service again, which carries the Omaha attributes) no longer swap in the proxy, requests name the real platform (`os=mac`, `prod=chromiumcrx`) instead of Windows, and `ChromeContentVerifierDelegate::IsFromStore`, the store's dedicated process and the downloader's defaults are Chromium's code again (content verification itself stays unenforced, as in unbranded Chromium before Helium). Helium's no-utm_source choice stays |
+| `chromium-extension-updates.patch` | The extension update service (`ChromeUpdateClientConfig::UpdateUrl`) checks `https://clients2.google.com/service/update2/json`: Helium leaves `ConfiguratorImpl::UpdateUrl` empty, and domain substitution cut off its default host. (Its first hunk, undoing ungoogled's early `return` in `UpdateCheckerImpl::CheckForUpdates`, went: Helium's `reenable-update-checks` does the same) |
+| `chromium-component-updater-security-only.patch` | The component updater fetches only the security components: CRLSet (`hfnkpimlhhgieaddgfemjhofmfblmnib`), PKI Metadata (`efniojlnjndmcbiieegkicadnoecjjef`: CT log list, Chrome Root Store, pins) and the SSL error assistant (`giekcmmlnklenlaomppkphknjmnnpneh`). `CrxUpdateService::GetCrxComponents` hands update_client no data for any other id, so scheduled and on-demand checks leave them out of the request; they stay registered, so a bundled or installed copy still loads, and a check of one ends in "Update error" without a request. `ChromeConfigurator` (the component updater's alone; the extension updater keeps its own) checks `https://update.googleapis.com/service/update2/json` with no override and no http fallback (Helium leaves `ConfiguratorImpl::UpdateUrl` empty, so nothing reads `kUpdaterJSONDefaultUrl`), sends no pings, and downloads in Chrome's network stack only (no background cache, so no NSURLSession). Its fetcher gets a destination policy (`NetworkFetcherChromiumFactory`'s `AllowedDestinationPredicate`, null for the extension updater): the update check may go only to that URL, downloads only to https `dl.google.com` or `*.gvt1.com` (any path) or `www.google.com/dl/` (port 443), checked on the first URL and on every redirect, so the server's http mirrors fail over to the https ones and a redirect elsewhere stops before it is followed; an empty request body is refused. Its requests keep only an allowlist of fields: `protocol`, `ismachine`, `dedup`, `acceptformat`, `sessionid`, `requestid` (both random per check), `@updater`, `prodversion`, `updaterversion`, `@os`, `arch`, `os`, the channels, and per component `appid`, `version` and `updatecheck`. The persisted fields Chrome uses to tie one check to the next stay out (`ping` with its `ping_freshness` UUID and day counts, `cohort*`, `installdate`, `iid`, `brand`, `cached_items`), and so do `lang`, `hw`, `dlpref`, `domainjoined` and `updaters`; the source IP address and the versions sent can still let Google correlate checks. CUP signing of the response and CRX3 publisher-proof and key-hash checks are Chrome's, unchanged. On Helium it also undoes `helium/core/component-updates.patch`: every component registers again (Helium registers only CRLSet and Widevine, so PKI Metadata never loaded), the update URL is Google's instead of `services.helium.imput.net/com` (which needs onboarding consent Ardia never asks for), and chrome://components loses Helium's "Helium services" error text; and it turns CUP back on (`ConfiguratorImpl::EnabledCupSigning`, which Helium's `reenable-update-checks` turns off; the extension update service reads it too). Since PKI Metadata replaces the compiled Chrome Root Store with any newer one, a root we distrust must also be in `kSPKIBlockList`: that list joins every CRLSet, downloaded or built in ([Blocking a compromised certificate](#blocking-a-compromised-certificate)) |
 | `chromium-extension-omaha-attributes.patch` | Google's kill switch for extensions works again: the update check's `_malware`, `_policy_violation` and `_potentially_uws` answers reach `ExtensionService::PerformActionBasedOnOmahaAttributes` and its `OmahaAttributesHandler`, which blocklist (malware: unloaded, "This extension contains malware.") or greylist (disabled) the extension, as in Chrome. It restores what `fix-building-without-safebrowsing` cut with Safe Browsing: the handler in `chrome/browser/extensions/BUILD.gn` and `ExtensionService`, `ChromeExtensionSystem`'s forwarding, `UpdateService::OnCrxStateChange`'s call, and the bodies of `ExtensionRegistrar::OnBlocklistState*`/`OnGreylistState*`. Safe Browsing's own verdict handlers stay cut |
 | `chromium-extension-management-policy-hook.patch` | Every profile's extension `ManagementPolicy` gets our providers (`ardia::RegisterManagementPolicyProviders`, `ac_scripts_policy.cc`) before it loads any extension: the unpacked "Ardia Scripts" extension at `<data dir>/Scripts/extension` may only hold content scripts (manifest keys, no permissions, plain script files), checked on install, reload, enable and every startup, so a manifest rewritten on disk can't side-load a privileged extension. `ac_extensions_install` of that folder refuses a symlinked folder and, while it runs, any unpacked install from another path; the policy also follows the folder's own extension id, and `ACContentBrowserClient` blocks navigation to any of its pages (`AddScriptsPagesThrottle`) |
 | `chromium-extension-sync-installer-hook.patch` | Tells ArdiaCore which installs are sync installs, per installer: `ExtensionUpdater::CreateUpdateInstaller` calls `g_ardia_sync_installer_created` (profile, id, installer) for a pending install that came from sync, and `CrxInstaller::ReportSuccessFromUIThread` calls `g_ardia_crx_installing` (context, installer, extension) on the UI thread just before it hands the registrar the extension. `ac_extensions_sync.cc` keeps the sync installers until their callback runs, so an install is a sync install exactly when the installer completing it is one of them, and the user's own Web Store install of the same id is told apart from a sync install that was cancelled or is still running (extension sync, `docs/sync.md` › Extensions) |
@@ -50,18 +63,25 @@ What the build adds:
 | `chromium-extension-installed-bubble.patch` | Chrome's "<extension> has been added" bubble (`ShowInfoDialog`): a window without Chrome's toolbar (every client window) gets it as a bubble under the top-right corner of the window, with a close button, closing on Esc and when the window is clicked. Chrome fell back to a browser-modal sheet there, with no buttons and no way to dismiss it. The app renames "Chromium" in Chrome's strings itself (`ac_strings.cc`) |
 | `chromium-tab-sharing-capturer.patch` | Each tab-sharing infobar remembers the frame whose capture it's for (`TabSharingInfoBarDelegate::capturer_id()`): a tab shows one infobar per share, and "Share this tab instead" moves only that share, never another call's |
 | `chromium-video-super-resolution.patch` | Video upscaling on Apple silicon: a per-compositor gate (`RenderWidgetHostView::SetVideoSuperResolutionAllowed` → `BrowserCompositorMac`, kept across its compositors → `ui::Compositor` → `DisplayPrivate.SetVideoSuperResolutionAllowed` → `viz::Display`, which redraws once on a change → `gfx::FrameData`) reaches the GPU process's `ImageTransportSurfaceOverlayMac::Present`, where `CALayerTreeCoordinator::UpscaleVideo` hands the frame's video layers to ArdiaCore's upscaler (`g_ardia_create_video_upscaler`, set in the GPU process; `//ardia/core` `ac_video_upscaler.mm`). A frame whose upscale has just started holds its CA commit until the job completes (at most 0.6 of a display frame, 4–10 ms, posted, never blocking the GPU thread); a later finish replaces the committed layer's contents in a small CA commit, a redraw of the same frame takes the cached output at once, and the contents are a `CALayer`'s IOSurface or an `AVSampleBufferDisplayLayer`'s buffer alike. The browser side decides the gate (`ac_video_upscaling.mm`) |
+| `chromium-begin-frame-warm-up.patch` | Opt in with `ARDIA_BEGIN_FRAME_BRIDGE=on` (`g_ardia_begin_frame_bridge`, set by `ACMainDelegate::BasicStartupComplete`, which the GPU process gets through its environment). When a tab is shown, `ExternalBeginFrameSourceMac` waits for the display link's first callback before the renderer gets a BeginFrame, so the first frame after the show can start a vsync late. With the bridge on it keeps each display's last vsync grid (timebase and interval, for 2 s) and, while it waits on the display link, sends up to 4 warm-up BeginFrames on that grid from a timer; the first real callback takes over, and a forced vsync update drops the grid. Off, the patched paths are Chrome's |
 | `chromium-main-frame-throttle-after-show.patch` | With `ThrottleMainFrameTo60Hz` on (the app turns it on with `UrgentMainFrameForInput`; `ARDIA_MAIN_FRAME_THROTTLE=off` leaves both out), a renderer on a 120 Hz display sends main frames (rAF, style, layout, paint) at 60 Hz while its compositor keeps drawing at 120 Hz, and input asks for an urgent main frame. The patch keeps main frames at the full rate for the first second after a widget is created or shown (`SchedulerStateMachine::ShouldThrottleSendBeginMainFrame`), so a switched-to tab and a new page paint at 120 Hz. Its tests are in `scheduler_state_machine_unittest.cc` (`cc_unittests --gtest_filter='SchedulerStateMachineTest.*:SchedulerTest.*'`). Off, nothing changes |
 | `chromium-main-frame-full-rate-on-input.patch` | Under the same throttle, main frames stay at the display rate while a threaded scroll is active (`SchedulerStateMachine::is_scrolling_`: trackpad with its momentum, wheel, keys, scrollbar) and for `ardia_full_rate_after_input` (a `ThrottleMainFrameTo60Hz` parameter, default 1 s) after it ends and after any input event the renderer's compositor sees (`NotifyInputEvent`). Without it a compositor scroll drew at 120 Hz while scroll events, rAF and everything painted from them ran at 60 Hz (keys, a mouse wheel), or at the input's own uneven cadence through urgent frames (a trackpad sending under 120 events a second), so script-moved content shook against the page. Only a page left alone (video, an idle animation) keeps the 60 Hz. `ARDIA_SCROLL_FULL_RATE=off` passes the parameter as 0 s, which is 0.2.38's behaviour. Tests next to the after-show ones |
 | `chromium-thaw-live-connections.patch` | `InfiniteTabsFreezing` gets an Ardia parameter, `ardia_unconnected_unfreeze_interval` (the app passes 600 s; `ARDIA_SLOW_TAB_THAW=off` leaves it out): a frozen tab that never opened a WebSocket, WebTransport or WebRTC connection thaws on that interval instead of Chrome's minute, and a tab that did is never frozen by it (Chrome's freeze drops a WebSocket: `DisconnectWebSocketOnBFCache` acts on any freeze). The test is the frame's BFCache features, sticky ones included (`content::ArdiaFrameHasLiveConnection`, `ardia_live_connection.cc`), read when the policy decides and when its thaw timer starts. Without the parameter the policy is Chrome's |
 | `chromium-battery-saver-full-rate-on-input.patch` | Chrome's Battery Saver caps every frame sink at 30 Hz (`content::StartThrottlingAllFrameSinks`), scrolling and typing included, and Ardia turns Battery Saver on at 20 % battery or less and in Low Power Mode by default, or whenever on battery if the user picks When unplugged (Settings › Advanced; `tabLifecycle.ts`). The patch gives `BatterySaverModeManager` `HoldFullFrameRateForInput()` (frame throttling lifts at once and comes back 1 s after the last call) and `SetFullFrameRateInputInProgress()` (while true the throttling stays lifted; the second starts when it turns false). `//chrome/browser/ardia` `ac_input_frame_rate.mm` calls them from an `NSEvent` local monitor installed the first time the app calls `ac_battery_saver`: every scroll, key, mouse and gesture event holds (at most every 100 ms), and a mouse button held down (each button on its own), a key held down or a scroll gesture with its momentum is in progress until its up, its key up or its ended phase, so a pressed scrollbar track keeps paging at full rate with no further events. Battery Saver turning on during such an input starts lifted. Spans end when the app resigns active, and after 30 s at most. `ARDIA_SCROLL_FULL_RATE=off` leaves the monitor out, so Battery Saver's cap is Chrome's again. Freezing, wake-up alignment and V8's battery saver mode are untouched |
-| `chromium-safe-browsing-off-file-types.patch` | With `safe_browsing_mode=0`, `components_resources` still builds the download file types protobuf the download code reads (Helium carries the same fix) |
-| `chromium-background-features-off.patch` | Background work Helium turns off, off by default here too: history clustering (Journeys), the Topics API, the Protected Audience (FLEDGE) runtime feature, Live Caption (so no on-device speech model download) and the outdated build check's timer |
-| `chromium-emudhra-distrust.patch` | The eMudhra intermediates with computable private keys (October 2026, Mozilla bug 2083449) are distrusted in the engine, not only through the CRLSet component: the SPKIs of EM DV, OV and EV TLS CA - G3B/G3C and EM OV CS CA - G3B/G3C (which also cover their Sectigo cross-signs) and of their root, emSign ECC Root CA - G3, join `kSPKIBlockList` (`net/cert/cert_verify_proc_blocklist.inc`), which every CRLSet, the built-in one included, merges in and every chain is checked against, whichever Chrome Root Store is active. The root also leaves the compiled store (`root_store.textproto` and `root_store.certs`), as Chrome Root Store v43 does; `version_major` stays 39 so newer component stores still apply. The 17 certificates and why are in `net/data/ssl/blocklist` |
+| `chromium-angle-metal-shader-cache.patch` | The framework ships ANGLE's prebuilt Metal shader cache (`gpu_shader_cache.bin`) again: Helium applies ungoogled's `fix-building-with-prunned-binaries`, which drops it from `chrome_framework_resources` |
+| `chromium-ungoogled-disable-default-extensions.patch` | ungoogled's `0005-disable-default-extensions` (BSD), which Helium leaves out, without its `webstore_installer.cc` part (that part stubs out Web Store installs): no Web Store hosted app or in-app payments app among the component extensions |
+| `chromium-ungoogled-disable-missing-key-warning.patch` | ungoogled's `0013-disable-missing-key-warning` (BSD), which Helium leaves out: no "Google API keys are missing" infobar |
+| `chromium-ungoogled-mime-util-ymp.patch` | iridium's `mime_util-force-text-x-suse-ymp-to-be-downloaded` (BSD), which Helium leaves out: YaST one-click files download instead of rendering |
 | `chromium-ardia-layer.patch` | The macOS `//chrome:chrome_dll` (ArdiaCore's framework) links `//chrome/browser/ardia` and exports its `ac_*` calls |
 | `chromium-pip-overlay-window.patch` | Chrome makes our `ArdiaVideoOverlayWindow` (`chrome/browser/ardia/pip/`, a `VideoOverlayWindowViews` subclass with its own buttons, progress bar, fade and bounds memory; the hook makes six methods virtual): Dia's video Picture in Picture window (measured in `docs/dia-spec.md` › Picture in Picture): nothing but the video at rest (the origin shows only with the controls); on hover a 35 % black scrim, back to tab (top left) and close (top right) as 28 pt rounded squares with 1 pt line glyphs, the origin centred in 13 pt, a bare play/pause glyph and a 5 pt progress bar that seeks; no skip, time, mute, captions or minimize controls (the keyboard shortcuts stay). Controls fade in 200 ms ease-in-out. The window shows at once and fades out in Core Animation (100 ms from the close button, 70 ms otherwise, smooth while the tab is being shown), and a new window opens where the last one was left, sized to the new video and kept on screen (`ArdiaPictureInPicture.plist` in the user data dir). Closing it, by its button or by the window going away any other way, never pauses the video, which keeps playing in its tab, as in Dia and Arc (`OnCloseButtonPressed` asks for `kCloseWindowOnly`, and the subclass's `OnNativeWidgetDestroyed` tells the controller not to pause; Chrome paused whenever the window had a play/pause button) |
 
 Removed, all in git history:
 
+- With the move to Helium: `chromium-safe-browsing-off-file-types.patch` and `chromium-background-features-off.patch`
+  (Helium's `fix-building-without-safebrowsing`, `disable-history-clusters`, `disable-ad-topics-and-etc`,
+  `disable-live-caption-completely` and `disable-outdated-build-detector` leave the same bytes), and
+  `chromium-emudhra-distrust.patch` (the owner's call: on Helium, Google's CRLSet and Chrome Root Store updates through
+  `chromium-component-updater-security-only.patch` cover eMudhra, as in Chrome).
 - 2026-10-15: `chromium-ui-update-before-insert.patch` and `chromium-tab-strip-notify-before-insert.patch` (CEF's guards
   for an embedder that made the Browser a tab's delegate before inserting it; ArdiaCore never does, and an instrumented
   build never hit either guard across popups, `target=_blank`, ⌘-click, `window.open`, session restore, splits and tabs
@@ -252,7 +272,8 @@ framework.
 ## The patch series
 
 `engine/patches/series` is the one place that says what goes into the tree and in what order: `chromium <patch>`
-lines (after ungoogled-chromium and domain substitution, step 4), then `layer <dir>` lines (our own files,
+lines (on the tree step 3 leaves: Helium's series, its domain and name substitution and our renaming; applied in
+step 4), then `layer <dir>` lines (our own files,
 `<dir>/apply.sh`). Each patch is made against the tree as every line above it leaves it, and covers one concern, named
 for it. A new patch goes where it belongs in the file; names no longer carry the order.
 
@@ -287,8 +308,10 @@ where they are.
 
 ## Blocking a compromised certificate
 
-Our component updater can't be trusted to deliver CRLSets in time, so a compromised CA goes into the engine itself,
-as `chromium-emudhra-distrust.patch` did on 2026-10-21. Download the certificates into their own directory and,
+CRLSets and Chrome Root Store updates reach the engine from Google through the component updater
+(`chromium-component-updater-security-only.patch`), as in Chrome. When a compromised CA can't wait for them, it goes
+into the engine itself. That was done once, for eMudhra on 2026-10-21 (`chromium-emudhra-distrust.patch`, in git
+history; dropped with the move to Helium, since Google's updates cover it). Download the certificates into their own directory and,
 working from outside it, compute each one's SHA-256 and SPKI SHA-256 with openssl
 (`openssl x509 -noout -pubkey | openssl pkey -pubin -outform DER | openssl dgst -sha256`). Check the SPKIs against
 an independent published list (Go's `distrustedSPKIHashes`, Mozilla's OneCRL entries). Add the SPKIs to
@@ -310,17 +333,26 @@ pathbuilder, which doesn't read CRLSets.
 ## Rebuilding
 
 Everything lives outside the repo in `~/chromium-build`, which carries `.metadata_never_index`.
-The step scripts are copied in `engine/patches/build/`, and each expects `~/chromium-build`. Run them under the
-chromium lock (`scripts/agent/locked chromium`), in the order 1, 3, 4, 2, 5 on a fresh checkout (`gn gen` once the
-tree is patched).
+The step scripts are copied in `engine/patches/build/`, and each expects `~/chromium-build`. Each refuses to run
+without `--apply` and the chromium lock (`scripts/agent/locked chromium`); `--help` prints its usage. Run them in the
+order 1, 3, 4, 2, 5 on a fresh checkout (`gn gen` once the tree is patched). Helium's checkouts are
+`~/chromium-build/helium` and `~/chromium-build/helium-macos` (`HELIUM_DIR`, `HELIUM_MACOS_DIR`), at the commits
+`helium-pins.ini` names.
+
+The live tree in `~/chromium-build` is still the ungoogled one: 0.2.40-nightly.5's framework was built from this
+series in an APFS clone of it (`~/ardia-scratch/sprint-1020/helium-demo/src`), which hasn't replaced the live tree yet.
 
 | Step | Script | Time (M5 Pro, shared machine) |
 |---|---|---|
 | 1. Fetch Chromium's tag (`CHROMIUM_VERSION` in `env.sh`) at depth 1 and check it out, then `gclient sync --no-history` of its deps for the Mac with the PGO profiles (`checkout_pgo_profiles`), then its hooks; clears the series base | `01-sync.sh` | ~40 min, 30 GB (deps alone, re-cloned: 7 min) |
 | 2. Write `out/Release_GN_arm64/args.gn` from `gn_defines.sh`, then `gn gen` | `02-gn-args.sh` | ~1 min |
-| 3. ungoogled-chromium's series, with the exceptions below | `03-ungoogled.py` | 2 min |
-| 4. Domain substitution, minus the store files (`domsub-keep-store.txt`), then our series: `apply-chromium-patches.sh` (`series.py capture-base` and `apply --phase chromium`, then the layers `engine/chromium/apply.sh` and `engine/ardiacore/apply.sh`) | `04-domain-substitution.sh` | 5 min |
+| 3. Helium, as Ardia takes it ([Helium](#helium)), in stages: `pins` (the checkouts are at the pinned commits, unmodified and made for this Chromium, and `deps.ini` downloads nothing we don't leave out), `guard`, `patches` (Helium's series, then helium-macos's, minus the skip list, with no fuzz), `fixups`, `domsub`, `namesub`, `brand-namesub`, `version`, `resources`. It runs once per tree: `.helium-stages-src`, beside the tree, records the stages that ran and refuses a second run or one that died mid-stage. Each patch's result goes to `~/chromium-build/logs/helium-patches.tsv` | `03-helium.py` | not timed on the live tree yet |
+| 4. Our series: `apply-chromium-patches.sh` (`series.py capture-base` and `apply --phase chromium`: the patches, then the layers `engine/chromium/apply.sh` and `engine/ardiacore/apply.sh`) | `04-series.sh` | not timed on the live tree yet |
 | 5. Regenerate the offline page (`game-resource.sh`), compile `chrome_framework` (ArdiaCore; the app's build stages it from `out/Release_GN_arm64`) | `05-build.sh` | first build 2.5 h (official, ThinLTO, PGO; 2026-10-18); incremental: the compile, then a ThinLTO relink of the framework, about 7 min (its cache, `thinlto-cache`, keeps that short) |
+
+After a build, `helium-check-build.py` (read only) checks the framework and its paks for what we leave out of
+Helium: it fails if Helium's uBlock Origin, its onboarding page or the non-free search engine data were built or
+packed, or if the binary or a pak names a Helium host (`helium.computer`, `imput.net`, `services.helium`).
 
 Disk: about 45 GB in total. That's 40 GB for the checkout with its 13 GB out dir, the PGO profiles (170 MB) and
 0.2 GB for the domain-substitution cache.
@@ -330,138 +362,140 @@ Rules for editing the tree after the first build:
 - **GN args** live in `gn_defines.sh`, the complete list (the args CEF's `gn_args.py` used to merge in are there
   too): an official build (`is_official_build=true`, which turns on ThinLTO and stripping) with PGO
   (`chrome_pgo_phase=2`, the profile `chrome/build/mac-arm.pgo.txt` names), no DCHECKs, no symbols, proprietary
-  codecs, Widevine (DRM still needs Google's VMP signing), Ardia branding, and ungoogled's and Helium's `flags.gn`
-  minus the exceptions below. Official builds don't allow `chrome_enable_logging_by_default`, so Chrome writes no
-  `chrome_debug.log` unless it's started with `--enable-logging` (a test instance:
-  `ARDIA_CHROMIUM_SWITCHES=--enable-logging`).
+  codecs, Widevine (DRM still needs Google's VMP signing), Ardia branding, and the flags Helium's `flags.gn` sets,
+  except `enable_mdns=false` and `enable_service_discovery=false` (the Cast dialog finds devices through them).
+  Helium's release build has `symbol_level=1`, for its crash reporter; we have none. `enable_rlz=true` keeps
+  Widevine's storage id (`chromium-helium-rlz-for-cdm-storage-id.patch`). Official builds
+  don't allow `chrome_enable_logging_by_default`, so Chrome writes no `chrome_debug.log` unless it's started with
+  `--enable-logging` (a test instance: `ARDIA_CHROMIUM_SWITCHES=--enable-logging`).
   After changing them, run step 2 again.
-- **Moving to a new Chromium version.** It deletes `out/` and costs a full build (official, ThinLTO, PGO), so it
-  needs the owner's OK.
+- **Moving to a new Chromium version.** Helium tracks Chromium, so from now on a new Helium tag is a new Chromium
+  version. It deletes `out/` and costs a full build (official, ThinLTO, PGO), so it needs the owner's OK.
   1. Domain substitution doesn't need reverting: its cache never matches a tree our series has patched (the revert
      fails on the hashes). Set `domsubcache.tar.gz` aside instead, and reset every repo of the checkout to its
      commit (`git reset --hard` and `git clean -ffd` in `src` and through `gclient recurse`). `01-sync.sh` runs
-     `gclient sync --reset --force -D` too.
-  2. Set `CHROMIUM_VERSION`, `UNGOOGLED_TAG` and `UNGOOGLED_MACOS_TAG` in `env.sh` (ungoogled's lists are made
-     for exactly one Chromium version) and check those tags out in `~/chromium-build/ungoogled{,-macos}`. The macOS
-     repo is often a few patch releases behind; its tag for the same milestone is fine, since only
-     `fix-disabling-safebrowsing.patch` comes from it.
+     `gclient sync --reset --force -D` too. Set `.helium-stages-src` aside as well: step 3 refuses a tree whose
+     stages it has recorded.
+  2. Set `CHROMIUM_VERSION`, `HELIUM_TAG` and `HELIUM_MACOS_TAG` in `env.sh`, and the version, tags and commits in
+     `helium-pins.ini`, and check those commits out in `~/chromium-build/helium{,-macos}`. Helium's patches and
+     lists are made for exactly one Chromium version: step 3's `pins` stage fails unless `env.sh`, the pins, Helium's
+     `chromium_version.txt` and the tree agree.
   3. Delete `out/`, re-run `01-sync.sh`, then steps 3, 4, 2 and 5.
   4. `src` is an unmanaged, shallow solution. gclient never moves it to a new tag, and a plain `git fetch` of it
      (or of a shallow dep) asks for the whole history of every branch: the server builds that pack for an hour
      without sending a byte. So `01-sync.sh` fetches the tag itself at depth 1. If deps stall the same way
      (`STALL DETECTED`, `git fetch --prune --no-tags origin` at 0 % CPU), delete the dep checkouts listed in
      `.gclient_entries` and sync again: gclient clones them fresh at depth 1.
-  5. Our patches and the hooks may need their context refreshed; `series.py check` and `apply.sh --check` say
+  5. Step 3's `guard` stage fails when a skipped patch has left Helium's series (check what replaced it) or an
+     applied one now touches what a skip protects (Safe Storage, password saving, Sparkle, the product dir, mDNS);
+     `GUARD_ALLOWED` in `03-helium.py` lists the hits reviewed for 0.19.4. A patch that no longer applies without
+     fuzz fails `patches`, and names any skipped patch that shares its files.
+  6. Our patches and the hooks may need their context refreshed; `series.py check` and `apply.sh --check` say
      which. A patch whose file moved is rewritten for the new path, and the new path's file goes into the series
      base (`series-base/`) as steps 3 and 4 left it.
 
-## ungoogled-chromium
-
-The patch set comes from the 155.0.8059.84-1 series plus the macOS repo's (155.0.8059.39-1.1)
-`fix-disabling-safebrowsing.patch` (`UNGOOGLED_TAG`, `UNGOOGLED_MACOS_TAG` in `env.sh`). The full list with reasons
-is `engine/patches/ungoogled-status.tsv`; the exceptions are `03-ungoogled.py`'s. `disable-gcm` now applies in full
-(CEF's own GCM stub went with CEF). The other exceptions first made for CEF are kept as the CEF-era build had them:
-a behaviour decision for later, no longer a build need.
-
-**Partial:**
-
-- `0021-disable-rlz`: `rlz/buildflags/buildflags.gni` is left out, so `enable_rlz` stays true (CEF required it).
-  RLZ stays inert: there's no brand code, and its host is substituted.
-- `add-flag-to-show-avatar-button` and `add-flag-for-incognito-themes`: their hunks in Chrome's toolbar and frame are
-  left out (they conflicted with CEF's patches there); ArdiaCore never shows either.
-- `0005-disable-default-extensions`: its WebstoreInstaller stubs are dropped.
-- `0006-modify-default-prefs`: saving passwords and autofilling addresses and cards stay on, because
-  Chrome's password manager and autofill are used (locally). Autosign-in stays off.
-- `block-requests`: its early `return` in `UpdateCheckerImpl::CheckForUpdates` is undone
-  (`chromium-extension-updates.patch`), so Web Store extensions auto-update. The component updater
-  checks only CRLSet, PKI Metadata and the SSL error assistant (`chromium-component-updater-security-only.patch`).
-
-**Safe Browsing is compiled out** (`safe_browsing_mode=0`, as in ungoogled and Helium, since 155): its lists could
-never update through domain substitution, yet every navigation and download still went through its checks. So
-`0001-fix-building-without-safebrowsing`, `fix-building-without-safebrowsing` (with fuzz 3, `FUZZ` in
-`03-ungoogled.py`: one `chrome/test/BUILD.gn` hunk sits next to the skipped pruning fix), `remove-unused-preferences-fields`,
-`move-js-optimizer-unfamiliar-sites` and the macOS `fix-disabling-safebrowsing` apply now. A patch applied with fuzz is
-checked as soon as it applies (`misplaced_hunks`): every hunk's result, its context and added lines, must be in its
-file, and the hunks fuzz is known to move (`FUZZED_HUNKS`, the `chrome/test/BUILD.gn` one) must pass their own
-present/absent checks instead; anything else fails step 3, so a hunk fuzz put in the wrong place on a Chromium bump
-is caught there. `fix-building-without-safebrowsing` also cuts the extension kill switch (Omaha attributes);
-`chromium-extension-omaha-attributes.patch` puts it back.
-
-**Not applied:** `fix-building-without-mdns-and-service-discovery`: mDNS and service discovery stay compiled in, since
-the Cast dialog finds devices through them.
-
-**Also not applied:**
-
-- `enable-extra-locales`: not privacy-related (it broke CEF's string packs).
-- `disable-webstore-urls`: the Web Store and extension updates are needed (user decision).
-- `disable-download-quarantine`: Chrome quarantines every download itself (`com.apple.quarantine`, and
-  `kMDItemWhereFroms` with its source URL) before it reports it complete, and turns a file macOS blocks into a failed
-  download. Ardia used to apply the patch and quarantine finished files afterwards, from `chrome/browser/ardia`.
-- `prefs-always-prompt-for-download-directory-by-defaul`: Chrome's default, save to the Downloads folder without
-  asking, is Ardia's. Ardia used to apply the patch and then write "don't ask" into each profile.
-
-**Skipped:**
-
-- Pruning and its two fixes: a gclient checkout keeps its prebuilt toolchains.
-- Two Linux-only patches.
-
-**Other changes:**
-
-- The ScreenAI sandbox fixup is gone: 155's ChromeContentBrowserClient no longer reaches ScreenAI code there.
-- GN flags not used: `enable_mdns=false` and `enable_service_discovery=false` (the Cast dialog). `safe_browsing_mode=0`
-  and `enable_reporting=false` are used.
-- Domain substitution skips the Web Store and extension-updater sources (`domsub-keep-store.txt`),
-  so chromewebstore.google.com, clients2.google.com and clients2.googleusercontent.com work.
-  Everything else Google stays substituted: spell-check dictionaries, Safe Browsing list updates, the CWS info
-  service and the shared component-updater URL constants. The component updater's own configurator names
-  update.googleapis.com in `chromium-component-updater-security-only.patch`, and only for CRLSet, PKI Metadata and
-  the SSL error assistant; every other component (the Widevine CDM included) never reaches the network.
-- A `--log-net-log` capture of an app session showed no Google hosts. The only attempt was Safe
-  Browsing's update to a substituted, blocked host. Since `chromium-component-updater-security-only.patch`
-  (2026-10-21), the component updater's checks reach update.googleapis.com and its downloads edgedl.me.gvt1.com
-  (a fresh profile's capture; installing a Web Store extension also reaches chromewebstore.googleapis.com).
-
 ## Helium
 
-[Helium](https://github.com/imputnet/helium-chromium) (0.19.4, also on 155.0.8059.84, ungoogled-based) was the model for
-the 155 upgrade. What we took and what we left, with the reason for each. Helium's patches are GPL-3.0, so none is
-copied in: the ones adopted are one-line default changes, made again here.
+[Helium](https://github.com/imputnet/helium-chromium) is built on ungoogled-chromium. Step 3 (`03-helium.py`) applies
+helium-chromium 0.19.4's series and then helium-macos 0.19.4.1's, as `patch -p1 -l -N` with no fuzz (Helium allows 2).
+Helium's build-time downloads (its uBlock Origin, the onboarding page, the non-free search engine data) are never
+fetched, and the hunks of its patches that edit them are left out.
 
-**GN args** (its `flags.gn` and `helium-macos`'s `flags.macos.gn` and `devutils/shared.sh` release mode):
+**Skipped** (`SKIP` in `03-helium.py`; each is a leaf, so the rest of the series applies without it):
 
-- Adopted: `is_official_build=true` (ThinLTO, stripping, official optimisation levels) and `chrome_pgo_phase=2` with
-  `checkout_pgo_profiles` (Chromium's own PGO profile, as Chrome's release builds use), `safe_browsing_mode=0` and
-  `enable_reporting=false`.
-- Kept as ours: `symbol_level=0` (Helium has 1, for its crash reporter; we have none), the codecs, Widevine with its
-  CDM storage id, branding.
-- Not adopted: `enable_mdns=false` and `enable_service_discovery=false` (the Cast dialog), `use_siso`/`cc_wrapper`
-  (Helium's own build cache), `enable_sparkle` (the app has its own updater).
+| Patch | Why |
+|---|---|
+| `helium/core/disable-password-manager` | forces password saving and passkeys off as managed prefs; Ardia uses Chrome's password manager |
+| `helium/ui/remove-autofill-link-to-password-manager` | drops "Manage passwords" from the fill dropdown |
+| `ungoogled-chromium/fix-building-without-mdns-and-service-discovery` | empties `DnsSdDeviceLister`; the Cast dialog needs mDNS |
+| `helium/core/memory-saving-by-default` | Memory Saver would fight Ardia's own tab sleeping |
+| `helium/macos/change-keychain-name` | renames the Safe Storage item; every user's passwords and cookies are encrypted with "Ardia Safe Storage" (`chromium-safe-storage-name.patch`) |
+| `helium/macos/change-product-dir-name` | moves the fallback product dir to `net.imput.helium` |
+| `rebel/macos/sparkle-integration`, `helium/macos/updater/{fixup-sparkle-glue,sparkle2-integration,disable-default-updater}` | Sparkle inside the framework; the app has its own updater |
+| `helium/ui/crash-dialog` | a startup infobar asking to upload crashes to `crash.helium.computer` |
+| `helium/core/use-system-python3`, `helium/core/rbe-nativelink-config`, `helium/macos/rbe-linux-clang-wrapper` | Helium's build setup (`.gn`'s `script_executable` would rerun every action; its remote build) |
+| `helium/macos/chromium-signing` | Helium's signing flow; `scripts/release.sh` signs Ardia |
 
-**Patches adopted:**
+The `guard` stage checks, before anything is applied, that every skipped patch is still in Helium's series and that no
+applied patch's added lines touch what a skip protects, beyond the reviewed hits in `GUARD_ALLOWED`. Some patches
+can't be skipped because later ones build on them (`proxy-extension-downloads`, `spoof-extension-downloader-platform`,
+ungoogled's `disable-webstore-urls` and `fix-building-with-prunned-binaries`, Helium's uBlock patches); our series
+undoes what they do instead (below).
 
-- `disable-history-clusters`, `disable-ad-topics-and-etc`, `disable-live-caption-completely`,
-  `disable-outdated-build-detector`: background work off by default (`chromium-background-features-off.patch`).
-- `fix-building-without-safebrowsing`: the download file types protobuf with `safe_browsing_mode=0`
-  (`chromium-safe-browsing-off-file-types.patch`).
+After the patches, `fixups` turns saving passwords, addresses and cards back on by default (inox's
+`modify-default-prefs` turns them off); autosign-in stays off.
 
-**Patches not adopted:**
+**Substitutions**, in this order:
 
-- `infinite-tab-freezing`: already on, from the app's command line (`InfiniteTabsFreezing`, with its
-  `ARDIA_TAB_FREEZING=off` kill switch).
-- `memory-saving-by-default`: Ardia sleeps tabs by its own policy (`lib/tabLifecycle`, after Dia); Chrome's Memory
-  Saver would discard tabs on a schedule of its own.
-- `lazy-session-restore`: ArdiaCore restores its own session; Chrome's session restore is off for its Browsers
-  (`should_trigger_session_restore=false`).
-- `prioritize-platform-policy-loading`: ArdiaCore makes no platform policy provider (`CreatePlatformProvider` returns
-  null).
-- `remove-unused-ai-resources`: the AI component extensions it stops loading (glic, contextual tasks) are already
-  off in a Chromium build (feature-gated, Google-branded only), so it only saves pak space.
-- `add-low-power-framerate-flag`: only a flag; Energy Saver's 30 fps default doesn't change.
-- `upstream-fixes/missing-dependencies` and `tab-restore-live-tabs`: already in 155.0.8059.84.
-- `fix-instance-id-stuck`: GCM is off (ungoogled's `disable-gcm`).
-- Everything under `helium/ui`, `helium/settings` and `helium/macos` (UI, settings pages, branding, Sparkle,
-  keychain names, menus), the search, sync, importer, uBlock-as-component, fingerprinting-noise, network-flag and
-  onboarding patches: UI, product features or privacy choices, not speed. AI patches: no AI features.
+- `domsub`: Helium's domain substitution, minus the Web Store and extension-updater sources in
+  `domsub-keep-store.txt`, so chromewebstore.google.com, clients2.google.com and clients2.googleusercontent.com work.
+  Everything else on Helium's list stays substituted. The pre-substitution copies go to
+  `~/chromium-build/domsubcache.tar.gz`.
+- `namesub`: Helium's `name_substitution.py --sub` and `i18n_apply.py`, unchanged: Chromium becomes Helium in the
+  strings, chrome:// becomes helium://, and the translations follow.
+- `brand-namesub`: `ardia_namesub.py` runs Helium's machinery again with our rules over every `.grd`, `.grdp` and
+  `.xtb`: "The Helium Authors" goes back to "The Chromium Authors" (first, so "Die Helium-Autoren" becomes "Die
+  Chromium-Autoren"), Helium becomes Ardia, helium:// shown to the user becomes ardia://, and links inside strings go
+  back to chrome:// so they keep opening in the engine. It fails if any string still says helium or imput.
+- `version`: `HELIUM_*` lines in `chrome/VERSION` equal to Chromium's own version, so Helium's version never shows.
+- `resources`: Helium's icons (its generated ones made with `sips`), then `ardia_resources.txt` over them: Ardia's
+  logos and product icons (`engine/chromium/src`, `engine/patches/build/ardia-icons`) and Chromium's own favicons
+  for its internal pages (`engine/patches/build/chromium-originals`).
+
+`chromium-helium-branding.patch`, first in our series, covers the literals in source these can't reach, and
+`ac_strings.cc` renames "Helium" as well as "Chromium" in Chrome's strings at run time.
+
+**Helium's services stay inert.** They sit behind Helium's services pref and its onboarding consent, and Ardia never
+gives that consent: the onboarding page isn't built and the browser always starts with `--no-first-run`. On top of
+that, the branding patch makes `ShouldAccessServices` false whatever the prefs say and points every services URL at an
+unresolvable placeholder, and the update feed and crash upload URLs are empty. Nothing in the engine contacts a
+Helium host; `helium-check-build.py` fails a build whose binary or paks name one.
+
+**What our series undoes** (each patch is in the table above):
+
+- `chromium-webstore-direct`: Web Store installs and extension updates go straight to Google again, not through
+  Helium's proxy.
+- `chromium-extension-updates` and `chromium-component-updater-security-only`: the extension and component updaters
+  check Google's servers (Helium leaves their URLs empty), every component registers again, the component updater
+  fetches only CRLSet, PKI Metadata and the SSL error assistant, and CUP is back on.
+- `chromium-helium-ublock-off`: Helium's uBlock Origin component isn't built or loaded; Ardia runs its own
+  (`fajbdaomknpkicfjcpipdmcpoamdmilh`).
+- `chromium-helium-onboarding-off`, `chromium-helium-services-page-off`: no onboarding page, no services page in
+  Settings.
+- `chromium-helium-search-assets-off`: no non-free search engine assets.
+- `chromium-helium-bangs-off`: Helium's native !bangs never fetch.
+- `chromium-helium-ntp-third-party`: chrome://newtab is the third-party New Tab page again unless Google is the default
+  engine.
+- `chromium-helium-context-menu-cast`: the page menu keeps Cast….
+- `chromium-helium-rlz-for-cdm-storage-id`, `chromium-angle-metal-shader-cache`: what Helium's applied ungoogled
+  patches took that we need (Widevine's storage id input, ANGLE's Metal shader cache).
+
+**Privacy defaults we inherit.** Where Helium's defaults differ from our ungoogled build's, Helium's win: Secure DNS is
+Chromium's automatic mode (ungoogled's `doh-changes` isn't applied; Helium's `dns-providers` adds providers to the
+upgrade table), WebRTC uses `default_public_interface_only` (`webrtc-default-handling-policy`), FedCM is on, and EV
+certificates show as in Chrome (ungoogled's `disable-fedcm-by-default` and `Remove-EV-certificates` aren't applied).
+Helium also adds fingerprinting noise (canvas, audio, hardware concurrency), HTTPS-First by default, reduced
+Accept-Language headers, a Global Privacy Control pref (off by default) and flags for ECH and QUIC v2, and turns
+`InfiniteTabsFreezing` on by default. Inox's prefs, Safe Browsing compiled out (`safe_browsing_mode=0`), MV2 and no
+field trials are as before.
+
+**Ungoogled patches Helium leaves out that we carry**, as `chromium-ungoogled-*` patches (BSD-3-Clause, as we
+applied them before Helium): `0005-disable-default-extensions` (without its `webstore_installer.cc` part),
+`0013-disable-missing-key-warning` and iridium's `mime_util-force-text-x-suse-ymp-to-be-downloaded`. Others Helium
+leaves out stay out, as before: `disable-download-quarantine` (Chrome quarantines every download itself, with
+`com.apple.quarantine` and its source URL in `kMDItemWhereFroms`), `prefs-always-prompt-for-download-directory`
+(Chrome's default, save to Downloads without asking, is Ardia's) and `enable-extra-locales`.
+
+### Licence and source
+
+Helium's patches are GPL-3.0, so the engine framework built from them, and Ardia as distributed, is GPL-3.0. Our own
+files stay Apache-2.0. Our patches that change Helium's code say so in their `SPDX-License-Identifier: GPL-3.0-only`
+header; the ones carried from ungoogled-chromium keep `BSD-3-Clause`.
+
+Every release links its Corresponding Source: the repo at its tag, plus `ArdiaCore-<tree>-source.tar.xz`, which
+`scripts/release.sh` packs with `scripts/engine-source.sh` for each new engine. It holds Helium's two tags, the
+onboarding and uBlock Origin versions Helium's `deps.ini` pins, and where Chromium's tag and source tarball are.
+chrome://credits keeps Helium's entry (`third_party/helium`). Helium's name appears nowhere else in the UI.
 
 ## Tab capture
 

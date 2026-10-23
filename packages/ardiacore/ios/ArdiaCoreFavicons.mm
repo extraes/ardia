@@ -112,13 +112,4 @@ void Download(NSString *url, NSString *profileName, void (^done)(NSData *_Nullab
   });
 }
 
-+ (void)pruneProfile:(NSString *)profile keeping:(NSArray<NSString *> *)names {
-  if (ardiacore_host::IsIncognito(profile)) return;
-  NSString *dir = FaviconDirectory(profile);
-  NSSet<NSString *> *keep = [NSSet setWithArray:names];
-  for (NSString *file in [NSFileManager.defaultManager contentsOfDirectoryAtPath:dir error:nil])
-    if (![keep containsObject:file.stringByDeletingPathExtension])
-      [NSFileManager.defaultManager removeItemAtPath:[dir stringByAppendingPathComponent:file] error:nil];
-}
-
 @end

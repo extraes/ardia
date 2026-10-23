@@ -372,14 +372,12 @@ PY
 
 hook "$src/chrome/browser/policy/chrome_browser_policy_connector.cc" "ChromeBrowserPolicyConnector's platform provider (embedder)" <<'PY'
 old = """ChromeBrowserPolicyConnector::CreatePlatformProvider() {
-#if BUILDFLAG(IS_WIN)
 """
 new = """ChromeBrowserPolicyConnector::CreatePlatformProvider() {
   // Ardia: ArdiaCore reads no platform policy (as CEF's build, which made none without a policy id).
   if (g_ardia_embedder) {
     return nullptr;
   }
-#if BUILDFLAG(IS_WIN)
 """
 def edit(s):
     assert s.count(old) == 1
@@ -719,26 +717,6 @@ def edit(s):
     return s.replace(old_ns, old_ns + "\n" + decl, 1).replace(old, new)
 hook(["bool g_ardia_prompts_without_tab = false;\n",
       "  if (!web_contents && g_ardia_prompts_without_tab) {\n"], edit, HOOKS)
-PY
-
-hook "$src/components/embedder_support/user_agent_utils.cc" "the user agent brand" <<'PY'
-old_ns = "namespace embedder_support {\n"
-decl = ("// Ardia: ArdiaCore (engine/ardiacore) reports Chrome's brand.\n"
-        "const char* g_ardia_user_agent_brand = nullptr;\n\n")
-old = """#if !BUILDFLAG(CHROMIUM_BRANDING)
-  brand = version_info::GetProductName();
-#endif
-"""
-new = old + """  // Ardia: ArdiaCore
-  if (g_ardia_user_agent_brand) {
-    brand = g_ardia_user_agent_brand;
-  }
-"""
-def edit(s):
-    assert s.count(old_ns) >= 1 and s.count(old) == 1
-    return s.replace(old_ns, decl + old_ns, 1).replace(old, new)
-hook(["const char* g_ardia_user_agent_brand = nullptr;\n",
-      "    brand = g_ardia_user_agent_brand;\n"], edit, CONTENT_HOOKS)
 PY
 
 hook "$src/chrome/browser/picture_in_picture/auto_picture_in_picture_tab_strip_observer_helper.h" "auto picture-in-picture's tab strip observer (header)" <<'PY'

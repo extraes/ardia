@@ -68,6 +68,7 @@ zip="$dist/Ardia-$version.zip"
 dmg="$dist/Ardia-$version.dmg"
 chromium_src="${CHROMIUM_SRC:-$HOME/chromium-build/chromium_git/chromium/src}"
 framework_src="${ARDIACORE_FRAMEWORK:-$chromium_src/out/Release_GN_arm64/Chromium Framework.framework}"
+framework_engine="${ARDIACORE_FRAMEWORK_ENGINE:-}"
 die() { echo "error: $*" >&2; exit 1; }
 
 pbx="$macos/Ardia.xcodeproj/project.pbxproj"
@@ -108,6 +109,11 @@ if [ -n "$dirty" ]; then
 fi
 
 [ -d "$framework_src" ] || die "no ArdiaCore framework at $framework_src (engine/ardiacore/apply.sh, then build chrome_framework)"
+if [ -n "$framework_engine" ]; then
+  [ -n "${ARDIACORE_FRAMEWORK:-}" ] || die "ARDIACORE_FRAMEWORK_ENGINE names the engine tree a prebuilt ARDIACORE_FRAMEWORK was built from; set both or neither"
+  [ "$framework_engine" = "$(git -C "$root" rev-parse HEAD:engine)" ] \
+    || die "ARDIACORE_FRAMEWORK_ENGINE is $framework_engine but HEAD's engine tree is $(git -C "$root" rev-parse HEAD:engine): that framework wasn't built from this commit's engine"
+fi
 if [ -z "${ARDIACORE_FRAMEWORK:-}" ]; then
   for layer in ardiacore chromium; do
     "$root/engine/$layer/apply.sh" --check \
@@ -278,7 +284,7 @@ engine_release="$(awk -v t="$engine_tree" '$1 == t { print $2; exit }' "$ardiaco
 helium_engine=""
 LC_ALL=C grep -q -a -F helium.services.enabled "$framework_src/Versions/Current/Chromium Framework" && helium_engine=1
 engine_pack=""
-if [ "$rc" = 0 ] && [ -z "${ARDIACORE_FRAMEWORK:-}" ] && [ -z "$engine_release" ]; then
+if [ "$rc" = 0 ] && { [ -z "${ARDIACORE_FRAMEWORK:-}" ] || [ -n "$framework_engine" ]; } && [ -z "$engine_release" ]; then
   engine_release="$version"
   echo "==> Pack the engine (background)"
   (
@@ -298,7 +304,7 @@ else
   rm -rf "$unpruned_engine"
 fi
 [ -z "$helium_engine" ] || [ "$rc" = 1 ] || [ -n "$engine_release" ] \
-  || die "no published release carries this engine ($engine_tree) and its source: build it from the Chromium tree, without ARDIACORE_FRAMEWORK"
+  || die "no published release carries this engine ($engine_tree) and its source: build it from the Chromium tree, without ARDIACORE_FRAMEWORK, or name the engine tree it was built from in ARDIACORE_FRAMEWORK_ENGINE"
 
 echo "==> Launch check"
 check_data="$(mktemp -d "${TMPDIR:-/tmp}/ac-release.XXXXXX")"

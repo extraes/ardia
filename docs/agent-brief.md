@@ -11,8 +11,8 @@ The user is demanding: no sloppy work, every hover state/animation/detail matter
 - `apps/browser`: Expo SDK 54 + react-native-macos 0.81 (Legacy architecture), zustand store,
   inline styles.
 - Native code lives in Expo modules under `packages/*/ios` (Swift / Objective-C++):
-  - `packages/ardiacore`: the web engine, **ArdiaCore**: Chrome's own framework (`Chromium Framework.framework`, plain
-    Chromium 155.0.8059.84 + ungoogled-chromium + our patch series, `docs/engine-build.md`) with our layer linked
+  - `packages/ardiacore`: the web engine, **ArdiaCore**: Chrome's own framework (`Chromium Framework.framework`,
+    Chromium 155.0.8059.84 + Helium 0.19.4 + our patch series, `docs/engine-build.md`) with our layer linked
     in, and the Expo modules and JS API the app uses (`docs/ardiacore-spike.md`, `docs/ardiacore-parity.md`).
     - **Chromium runs the process.** `main.swift` calls `ArdiaCoreHost.run`: `ChromeMain` starts with our
       `ACMainDelegate`, `NSApp` is Chrome's `BrowserCrApplication`, and the React Native host (`AppDelegate`) starts
@@ -47,7 +47,7 @@ The user is demanding: no sloppy work, every hover state/animation/detail matter
   edit there, then `scripts/agent/locked pod -- pnpm patch-commit <scratch dir>`, and read the new `.patch`:
   pnpm can add bogus `deleted file` entries (drop them and run `pnpm install` again under the same lock).
   Mark edits `[Ardia: … Ardia]`. Current patches: `react-native-macos` (a view's `transform` survives
-  AppKit layout and applies from its centre; RCTTiming's display link, c7ebd600; a view in a scroll view observes its bounds once, not once per re-add; focus() on a text field being edited keeps its edit, caret and selection; a placeholder change on an empty field being edited isn't a blur; a placeholder colour change on a field being edited reaches its field editor, so it shows once the field is emptied; a container whose children change leaves the ones already in place alone instead of re-adding every one, 6d7277fd) and `expo-modules-core` (the JS
+  AppKit layout and applies from its centre; RCTTiming's display link, c7ebd600; a view in a scroll view observes its bounds once, not once per re-add; focus() on a text field being edited keeps its edit, caret and selection; a placeholder change on an empty field being edited isn't a blur; a placeholder colour change on a field being edited reaches its field editor, so it shows once the field is emptied; a container whose children change leaves the ones already in place alone instead of re-adding every one, 6d7277fd; a mouse touch matches its own down on the same button and is never recorded twice, so JS never gets a null touch, 8bd086c8) and `expo-modules-core` (the JS
   runtime is prepared on the JS thread only, 364f5f7e).
 
 ## The engine

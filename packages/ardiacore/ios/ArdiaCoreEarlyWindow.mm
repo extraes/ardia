@@ -13,6 +13,7 @@
 #import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
 
 #include <cmath>
+#include <initializer_list>
 #include <mach/mach.h>
 #include <os/lock.h>
 
@@ -23,6 +24,9 @@
 @property(nonatomic, strong) NSView *cover;
 @property(nonatomic, strong) NSView *picture;
 @property(nonatomic, strong) NSView *backdrop;
+@property(nonatomic, weak) NSView *root;
+@property(nonatomic, strong) NSColor *rootFill;
+@property(nonatomic) BOOL rootFillCleared;
 @property(nonatomic, strong) ArdiaCoreTab *tab;
 @property(nonatomic, copy) NSString *key;
 @property(nonatomic, copy) NSString *expectedURL;
@@ -64,12 +68,16 @@
 
 namespace {
 
-constexpr int kLayoutVersion = 2;
+constexpr int kLayoutVersion = 3;
 constexpr double kRecordDelay = 1.0;
 constexpr double kUnclaimedSeconds = 15;
 constexpr double kClaimedSeconds = 5;
 constexpr double kUntakenAfterContentSeconds = 2;
-constexpr double kPictureAfterContentSeconds = 0.5;
+constexpr double kCoverCheckSeconds = 0.016;
+constexpr double kCoveredFailSafeSeconds = 1.5;
+constexpr double kOnScreenAfterCoveredSeconds = 0.05;
+constexpr CGFloat kGlassVeilDark = 0.128;
+constexpr CGFloat kGlassVeilLight = 0.3;
 constexpr CGFloat kMinPage = 100;
 constexpr double kTrimAfterHandoffSeconds = 2;
 constexpr double kWatchAfterAdoptionSeconds = 10;
@@ -280,6 +288,143 @@ NSView *DrawnContent(NSView *root) {
   return root;
 }
 
+Class GlassClass() {
+  static Class glass = NSClassFromString(@"NSGlassEffectView");
+  return glass;
+}
+
+id GlassValue(NSView *glass, NSString *key) {
+  return [glass respondsToSelector:NSSelectorFromString(key)] ? [glass valueForKey:key] : nil;
+}
+
+NSColor *GlassStandInColor(NSView *glass) {
+  NSString *appearance = [glass.effectiveAppearance bestMatchFromAppearancesWithNames:@[ NSAppearanceNameDarkAqua, NSAppearanceNameAqua ]];
+  const BOOL clear = [GlassValue(glass, @"style") integerValue] != 0;
+  const CGFloat veil = clear ? 0 : [appearance isEqualToString:NSAppearanceNameDarkAqua] ? kGlassVeilDark : kGlassVeilLight;
+  id tintValue = GlassValue(glass, @"tintColor");
+  NSColor *tint = [tintValue isKindOfClass:NSColor.class] ? [tintValue colorUsingColorSpace:NSColorSpace.sRGBColorSpace] : nil;
+  const CGFloat tintAlpha = tint ? tint.alphaComponent : 0;
+  const CGFloat alpha = 1 - (1 - veil) * (1 - tintAlpha);
+  if (alpha <= 0) return NSColor.clearColor;
+  auto channel = [&](CGFloat c) { return (veil * (1 - tintAlpha) + c * tintAlpha) / alpha; };
+  return [NSColor colorWithSRGBRed:channel(tint.redComponent) green:channel(tint.greenComponent) blue:channel(tint.blueComponent) alpha:alpha];
+}
+
+CALayer *GlassStandIn(NSView *glass) {
+  CALayer *glassLayer = glass.layer;
+  if (!glassLayer.superlayer) return nil;
+  CALayer *standIn = [CALayer layer];
+  standIn.frame = glassLayer.frame;
+  const CGFloat radius = [GlassValue(glass, @"cornerRadius") doubleValue];
+  standIn.cornerRadius = std::isfinite(radius) && radius > 0 ? MIN(radius, MIN(NSWidth(standIn.bounds), NSHeight(standIn.bounds)) / 2) : 0;
+  standIn.cornerCurve = kCACornerCurveContinuous;
+  standIn.backgroundColor = GlassStandInColor(glass).CGColor;
+  [glassLayer.superlayer insertSublayer:standIn above:glassLayer];
+  return standIn;
+}
+
+CGContextRef MakeBitmap(size_t w, size_t h) {
+  CGColorSpaceRef space = CGColorSpaceCreateWithName(kCGColorSpaceSRGB);
+  CGContextRef context = CGBitmapContextCreate(nullptr, w, h, 8, 0, space, (CGBitmapInfo)kCGImageAlphaPremultipliedLast);
+  CGColorSpaceRelease(space);
+  return context;
+}
+
+BOOL CastsPathShadowOnly(CALayer *layer) {
+  return layer.shadowPath && layer.shadowOpacity > 0 && layer.shadowColor && !layer.masksToBounds && !layer.backgroundColor && !layer.contents;
+}
+
+CGRect StandInExtent(CALayer *layer) {
+  CALayer *mask = layer.mask;
+  CGRect extent = layer.bounds;
+  if (layer.shadowOpacity > 0 && layer.shadowColor && !layer.masksToBounds) {
+    const CGFloat spread = 2 * layer.shadowRadius + MAX(fabs(layer.shadowOffset.width), fabs(layer.shadowOffset.height)) + 1;
+    const CGRect caster = layer.shadowPath ? CGPathGetBoundingBox(layer.shadowPath) : layer.bounds;
+    extent = CGRectUnion(extent, CGRectInset(caster, -spread, -spread));
+  }
+  if (mask) {
+    CGRect shown = mask.frame;
+    if ([mask isKindOfClass:CAShapeLayer.class] && ((CAShapeLayer *)mask).path)
+      shown = CGRectUnion(shown, [mask convertRect:CGPathGetBoundingBox(((CAShapeLayer *)mask).path) toLayer:layer]);
+    extent = CGRectIntersection(extent, shown);
+  }
+  return CGRectIntegral(extent);
+}
+
+void DrawPathShadow(CGContextRef context, CALayer *layer, CGFloat scale) {
+  CGPathRef path = layer.shadowPath;
+  const CGRect box = CGPathGetBoundingBox(path);
+  const CGFloat far = box.size.width + 4 * layer.shadowRadius + fabs(layer.shadowOffset.width) + 64;
+  const CGSize shift = CGSizeApplyAffineTransform(CGSizeMake(far, 0), CGContextGetCTM(context));
+  const CGSize offset = CGSizeApplyAffineTransform(layer.shadowOffset, CGContextGetCTM(context));
+  CGColorRef color = CGColorCreateCopyWithAlpha(layer.shadowColor, CGColorGetAlpha(layer.shadowColor) * layer.shadowOpacity);
+  CGContextSaveGState(context);
+  CGContextSetShadowWithColor(context, CGSizeMake(offset.width - shift.width, offset.height - shift.height), 2 * layer.shadowRadius * scale, color);
+  CGContextTranslateCTM(context, far, 0);
+  CGContextAddPath(context, path);
+  CGContextSetFillColorWithColor(context, CGColorGetConstantColor(kCGColorBlack));
+  CGContextFillPath(context);
+  CGContextRestoreGState(context);
+  CGColorRelease(color);
+}
+
+CALayer *StandIn(CALayer *layer, CGFloat scale) {
+  CALayer *mask = layer.mask;
+  if (layer.hidden || !layer.superlayer) return nil;
+  const CGRect extent = StandInExtent(layer);
+  const size_t w = (size_t)ceil(extent.size.width * scale), h = (size_t)ceil(extent.size.height * scale);
+  if (w < 1 || h < 1 || w > 8192 || h > 8192) return nil;
+  CGContextRef content = MakeBitmap(w, h), shape = mask ? MakeBitmap(w, h) : nullptr;
+  if (!content || (mask && !shape)) {
+    if (content) CGContextRelease(content);
+    if (shape) CGContextRelease(shape);
+    return nil;
+  }
+  for (CGContextRef each : {content, shape}) {
+    if (!each) continue;
+    CGContextScaleCTM(each, scale, scale);
+    if (layer.contentsAreFlipped) {
+      CGContextTranslateCTM(each, 0, extent.size.height);
+      CGContextScaleCTM(each, 1, -1);
+    }
+    CGContextTranslateCTM(each, -extent.origin.x, -extent.origin.y);
+  }
+  if (CastsPathShadowOnly(layer)) DrawPathShadow(content, layer, scale);
+  layer.mask = nil;
+  [layer renderInContext:content];
+  layer.mask = mask;
+  if (shape) {
+    CGContextTranslateCTM(shape, mask.frame.origin.x - mask.bounds.origin.x, mask.frame.origin.y - mask.bounds.origin.y);
+    [mask renderInContext:shape];
+    CGImageRef shapeImage = CGBitmapContextCreateImage(shape);
+    CGContextRelease(shape);
+    CGContextSaveGState(content);
+    CGContextConcatCTM(content, CGAffineTransformInvert(CGContextGetCTM(content)));
+    CGContextSetBlendMode(content, kCGBlendModeDestinationIn);
+    if (shapeImage) CGContextDrawImage(content, CGRectMake(0, 0, w, h), shapeImage);
+    CGContextRestoreGState(content);
+    CGImageRelease(shapeImage);
+  }
+  CGImageRef composed = CGBitmapContextCreateImage(content);
+  CGContextRelease(content);
+  if (!composed) return nil;
+  CALayer *standIn = [CALayer layer];
+  standIn.anchorPoint = layer.anchorPoint;
+  standIn.bounds = layer.bounds;
+  standIn.position = layer.position;
+  standIn.transform = layer.transform;
+  standIn.geometryFlipped = layer.geometryFlipped;
+  CALayer *drawing = [CALayer layer];
+  drawing.frame = extent;
+  drawing.contents = (__bridge id)composed;
+  drawing.contentsScale = scale;
+  drawing.contentsGravity = kCAGravityResize;
+  [standIn addSublayer:drawing];
+  CGImageRelease(composed);
+  [layer.superlayer insertSublayer:standIn above:layer];
+  return standIn;
+}
+
 BOOL CapturePicture(ArdiaCoreWindowController *controller, NSString *windowId, NSDictionary *layout) {
   NSWindow *window = controller.coreWindow.window;
   NSView *root = controller.root;
@@ -304,6 +449,7 @@ BOOL CapturePicture(ArdiaCoreWindowController *controller, NSString *windowId, N
   }
   NSMutableArray<NSView *> *pending = [NSMutableArray arrayWithObject:source];
   NSMutableArray<CALayer *> *backdrops = [NSMutableArray array];
+  NSMutableArray<NSView *> *glasses = [NSMutableArray array];
   NSMutableArray<CALayer *> *fills = [NSMutableArray array];
   NSMutableArray *fillColors = [NSMutableArray array];
   const NSRect whole = root.bounds;
@@ -311,6 +457,10 @@ BOOL CapturePicture(ArdiaCoreWindowController *controller, NSString *windowId, N
     NSView *view = pending[i];
     if ([NSStringFromClass(view.class) hasSuffix:@"WindowBackdropView"] || [view isKindOfClass:NSVisualEffectView.class]) {
       if (view.layer && !view.layer.hidden) [backdrops addObject:view.layer];
+      continue;
+    }
+    if (GlassClass() && [view isKindOfClass:GlassClass()]) {
+      if (view.layer && !view.layer.hidden) [glasses addObject:view];
       continue;
     }
     if (NSEqualSizes([view convertRect:view.bounds toView:root].size, whole.size)) {
@@ -321,13 +471,15 @@ BOOL CapturePicture(ArdiaCoreWindowController *controller, NSString *windowId, N
     }
     [pending addObjectsFromArray:view.subviews];
   }
+  NSMutableSet<CALayer *> *glassLayers = [NSMutableSet set];
+  for (NSView *glass in glasses) [glassLayers addObject:glass.layer];
   NSMutableArray<CALayer *> *layers = [NSMutableArray arrayWithObject:drawnLayer];
   NSMutableArray<CALayer *> *effected = [NSMutableArray array];
   NSMutableArray<NSArray *> *effects = [NSMutableArray array];
   for (NSUInteger i = 0; i < layers.count && i < 20000; i++) {
     CALayer *each = layers[i];
-    if ([backdrops containsObject:each]) continue;
-    if (each.mask || each.filters.count || each.compositingFilter || each.backgroundFilters.count) {
+    if ([backdrops containsObject:each] || [glassLayers containsObject:each]) continue;
+    if (each.mask || each.filters.count || each.compositingFilter || each.backgroundFilters.count || CastsPathShadowOnly(each)) {
       [effected addObject:each];
       [effects addObject:@[ each.mask ?: NSNull.null, each.filters ?: @[], each.compositingFilter ?: NSNull.null, each.backgroundFilters ?: @[] ]];
     }
@@ -336,14 +488,28 @@ BOOL CapturePicture(ArdiaCoreWindowController *controller, NSString *windowId, N
   [CATransaction begin];
   [CATransaction setDisableActions:YES];
   for (CALayer *backdrop in backdrops) backdrop.hidden = YES;
+  NSMutableArray<CALayer *> *standIns = [NSMutableArray array];
+  for (NSView *glass in glasses)
+    if (CALayer *standIn = GlassStandIn(glass)) [standIns addObject:standIn];
+  for (CALayer *glass in glassLayers) glass.hidden = YES;
   for (CALayer *fill in fills) fill.backgroundColor = nil;
   for (CALayer *each in effected) {
-    each.mask = nil;
     each.filters = nil;
     each.compositingFilter = nil;
     each.backgroundFilters = nil;
   }
+  NSMutableArray<CALayer *> *replacedHidden = [NSMutableArray array];
+  for (CALayer *each in effected.reverseObjectEnumerator) {
+    if (!each.mask && !CastsPathShadowOnly(each)) continue;
+    if (CALayer *standIn = each == drawnLayer ? nil : StandIn(each, scale)) {
+      [standIns addObject:standIn];
+      [replacedHidden addObject:each];
+      each.hidden = YES;
+    }
+    each.mask = nil;
+  }
   [drawnLayer renderInContext:context];
+  for (CALayer *each in replacedHidden) each.hidden = NO;
   for (NSUInteger i = 0; i < effected.count; i++) {
     NSArray *saved = effects[i];
     effected[i].mask = saved[0] == NSNull.null ? nil : saved[0];
@@ -352,6 +518,8 @@ BOOL CapturePicture(ArdiaCoreWindowController *controller, NSString *windowId, N
     effected[i].backgroundFilters = [saved[3] count] ? saved[3] : nil;
   }
   for (CALayer *backdrop in backdrops) backdrop.hidden = NO;
+  for (CALayer *standIn in standIns) [standIn removeFromSuperlayer];
+  for (CALayer *glass in glassLayers) glass.hidden = NO;
   for (NSUInteger i = 0; i < fills.count; i++) fills[i].backgroundColor = (__bridge CGColorRef)fillColors[i];
   [CATransaction commit];
   CGContextRestoreGState(context);
@@ -753,25 +921,76 @@ void RemovePicture(NSView *picture) {
   [picture removeFromSuperview];
 }
 
+void ClearRootFill(ACEarlyShown *s, NSView *root) {
+  if (s.rootFillCleared || (!s.picture && !s.backdrop) || ![root respondsToSelector:@selector(setBackgroundColor:)]) return;
+  id fill = [root valueForKey:@"backgroundColor"];
+  s.rootFill = [fill isKindOfClass:NSColor.class] ? fill : nil;
+  s.rootFillCleared = YES;
+  [CATransaction begin];
+  [CATransaction setDisableActions:YES];
+  [root setValue:nil forKey:@"backgroundColor"];
+  [CATransaction commit];
+}
+
+void ReleasePictures(NSView *picture, NSView *backdrop, NSView *root, NSColor *fill) {
+  [CATransaction begin];
+  [CATransaction setDisableActions:YES];
+  RemovePicture(picture);
+  [backdrop removeFromSuperview];
+  if (root) [root setValue:fill forKey:@"backgroundColor"];
+  [CATransaction commit];
+}
+
+BOOL Covered(NSView *root) {
+  if (!root.window) return NO;
+  const NSRect whole = NSInsetRect(root.bounds, 1, 1);
+  NSMutableArray<NSView *> *pending = [NSMutableArray arrayWithObject:root];
+  for (NSUInteger i = 0; i < pending.count && i < 4000; i++) {
+    NSView *view = pending[i];
+    if ([NSStringFromClass(view.class) hasSuffix:@"WindowBackdropView"])
+      return !view.isHiddenOrHasHiddenAncestor && view.alphaValue > 0 && NSContainsRect([view convertRect:view.bounds toView:root], whole);
+    [pending addObjectsFromArray:view.subviews];
+  }
+  return NO;
+}
+
+void ReleaseOnceCovered(NSView *picture, NSView *backdrop, NSView *root, NSColor *fill, BOOL restoreFill, CFTimeInterval deadline) {
+  __weak NSView *weakRoot = root;
+  dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(kCoverCheckSeconds * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+    NSView *drawnRoot = weakRoot;
+    const BOOL covered = drawnRoot && Covered(drawnRoot);
+    if (drawnRoot && !covered && CACurrentMediaTime() < deadline) return ReleaseOnceCovered(picture, backdrop, drawnRoot, fill, restoreFill, deadline);
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(kOnScreenAfterCoveredSeconds * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+      NSView *shownRoot = weakRoot;
+      if (covered && shownRoot && !Covered(shownRoot))
+        return ReleaseOnceCovered(picture, backdrop, shownRoot, fill, restoreFill, MAX(deadline, CACurrentMediaTime() + kCoveredFailSafeSeconds));
+      ReleasePictures(picture, backdrop, restoreFill ? shownRoot : nil, fill);
+    });
+  });
+}
+
 void DropPictures(ACEarlyShown *s) {
-  RemovePicture(s.picture);
-  [s.backdrop removeFromSuperview];
+  ReleasePictures(s.picture, s.backdrop, s.rootFillCleared ? s.root : nil, s.rootFill);
   s.picture = nil;
   s.backdrop = nil;
+  s.rootFillCleared = NO;
+  s.rootFill = nil;
+}
+
+void HandOffPictures(ACEarlyShown *s) {
+  if (s.picture || s.backdrop)
+    ReleaseOnceCovered(s.picture, s.backdrop, s.root, s.rootFill, s.rootFillCleared, CACurrentMediaTime() + kCoveredFailSafeSeconds);
+  s.picture = nil;
+  s.backdrop = nil;
+  s.rootFillCleared = NO;
+  s.rootFill = nil;
 }
 
 void Forget(ACEarlyShown *s) {
   DropCover(s);
   if (s.closeObserver) [NSNotificationCenter.defaultCenter removeObserver:s.closeObserver];
   s.closeObserver = nil;
-  NSView *picture = s.picture, *backdrop = s.backdrop;
-  s.picture = nil;
-  s.backdrop = nil;
-  if (picture || backdrop)
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(kPictureAfterContentSeconds * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-      RemovePicture(picture);
-      [backdrop removeFromSuperview];
-    });
+  HandOffPictures(s);
   [Shown() removeObject:s];
   if (!Shown().count) TrimAfterHandoff();
 }
@@ -1152,7 +1371,7 @@ CGImageRef TakePrefetched(NSString *windowId) {
     }
     s.claimed = YES;
     window.appearance = nil;
-    if (![s.profile isEqualToString:profile ?: @""] || !s.cover) {
+    if (![s.profile isEqualToString:profile ?: @""]) {
       DropPictures(s);
       Forget(s);
       return window;
@@ -1180,6 +1399,13 @@ CGImageRef TakePrefetched(NSString *windowId) {
 + (void)rootEmbedded:(NSView *)root inWindow:(NSWindow *)window {
   ACEarlyShown *s = ShownForWindow(window);
   if (!root || !s) return;
+  if (s.rootFillCleared && s.root != root) {
+    [s.root setValue:s.rootFill forKey:@"backgroundColor"];
+    s.rootFillCleared = NO;
+    s.rootFill = nil;
+  }
+  s.root = root;
+  ClearRootFill(s, root);
   if (s.contentObserver) [NSNotificationCenter.defaultCenter removeObserver:s.contentObserver];
   __weak ACEarlyShown *weakShown = s;
   s.contentObserver = [NSNotificationCenter.defaultCenter
@@ -1192,13 +1418,7 @@ CGImageRef TakePrefetched(NSString *windowId) {
                 [NSNotificationCenter.defaultCenter removeObserver:shown.contentObserver];
                 shown.contentObserver = nil;
                 if (!shown.tab) DropCover(shown);
-                dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(kPictureAfterContentSeconds * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-                  ACEarlyShown *drawn = weakShown;
-                  RemovePicture(drawn.picture);
-                  [drawn.backdrop removeFromSuperview];
-                  drawn.picture = nil;
-                  drawn.backdrop = nil;
-                });
+                HandOffPictures(shown);
                 dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(kUntakenAfterContentSeconds * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
                   ACEarlyShown *later = weakShown;
                   if (later && [Shown() containsObject:later]) Forget(later);

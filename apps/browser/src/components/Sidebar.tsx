@@ -1,6 +1,6 @@
 import { ContextMenuArea, FadeLabel, Symbol, WindowDragRegion } from "@ardia/shell";
 import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from "react";
-import { Animated, Pressable, ScrollView, StyleSheet, Text, View, type NativeScrollEvent, type NativeSyntheticEvent } from "react-native";
+import { Animated, Pressable, ScrollView, StyleSheet, Text, View, type LayoutChangeEvent, type NativeScrollEvent, type NativeSyntheticEvent } from "react-native";
 import { switchOn } from "../lib/killSwitches";
 import { everySlowly } from "../lib/slowTimers";
 import { layout, ThemeScope, useTheme } from "../lib/theme";
@@ -20,7 +20,7 @@ import { PROFILE_DOTS_HEIGHT, ProfileDots, useProfileDotsShown } from "./profile
 import { SidebarAddressRow, SidebarHeaderTools } from "./sidebar/AddressBar";
 import { ClearDivider } from "./sidebar/ClearDivider";
 import { DragGhost } from "./sidebar/DragGhost";
-import { DragProvider, DragScope, useDragController, useDragItem, type Ghost } from "./sidebar/dnd";
+import { DragProvider, DragScope, useDragController, useDragging, useDragItem, usePinnedCount, type Ghost } from "./sidebar/dnd";
 import { SidebarDropArea } from "./sidebar/fileDrop";
 import { useClipped, useShift, type ClipSource, type EntryMotion } from "./sidebar/entryMotion";
 import { sidebarEntries } from "./sidebar/entries";
@@ -30,7 +30,9 @@ import { LiveFolders } from "./sidebar/LiveFolderBlock";
 import { capture, GhostSlot, ListMotionContext, newCapture, useListMotion } from "./sidebar/listMotion";
 import { openOverflowMenu, openSidebarMenu } from "./sidebar/menus";
 import { PinFieldZone, PinnedGrid, PinSlotZone } from "./sidebar/PinnedGrid";
+import { pinGridHeight } from "./sidebar/pinZone";
 import { ResizeHandle } from "./sidebar/ResizeHandle";
+import { SCROLL_EDGE, ScrollEdgeLine, useScrollEdge } from "./sidebar/ScrollEdge";
 import { entriesHeight, firstPaintEntries, rowSpan, startsOffScreen, type Section } from "./sidebar/geometry";
 import { measureRow } from "./sidebar/state";
 import { SplitRowItem, TabRowItem } from "./sidebar/TabRow";
@@ -42,6 +44,7 @@ const ROW_PITCH = layout.rowHeight + layout.rowGap;
 const DOCKED_BOTTOM = 6;
 const DOCK = DOCKED_BOTTOM + ROW_PITCH;
 const ROWS_PER_FRAME = 32;
+const DOCK_SHARE = 0.4;
 const NONE: string[] = [];
 
 export function Sidebar({ width }: { width: number }) {
@@ -60,7 +63,7 @@ export function Sidebar({ width }: { width: number }) {
   };
   const scroll = useRef<ScrollView>(null);
   const scrollY = useRef(0);
-  const geometry = useRef<SidebarGeometry>({ viewport: 0, regions: { pinnedGroups: 0, list: 0 }, newTabAtTop: false });
+  const geometry = useRef<SidebarGeometry>({ viewport: 0, regions: { pinnedGroups: 0, list: 0 }, newTabAtTop: false, room: 0, pad: 0, tilesFixed: true });
   const playerTab = useSidebarPlayerTab(windowId);
   const playerHeight = playerTab ? SIDEBAR_PLAYER_HEIGHT : 0;
   const addressBar = useAddressBarInSidebar();
@@ -72,7 +75,7 @@ export function Sidebar({ width }: { width: number }) {
   const footer = dots || footerDownloads ? PROFILE_DOTS_HEIGHT : 0;
   const nothingPinned = useBrowser((s) => sidebarEntries(s, windowId, current).tiles.length === 0);
 
-  useRevealTabs(windowId, scroll, scrollY, geometry, glowRoom);
+  useRevealTabs(windowId, scroll, scrollY, geometry);
   useLayoutEffect(() => dismissHoverIn(windowId), [windowId, current, paging]);
 
   return (
@@ -105,6 +108,7 @@ export function Sidebar({ width }: { width: number }) {
                 resting={!!page.resting}
                 docked={docked}
                 glowRoom={glowRoom}
+                height={available}
                 rows={page.id === current ? undefined : Math.ceil(available / ROW_PITCH) + 1}
                 geometry={page.id === current ? geometry : undefined}
                 onListHeight={onListHeight}
@@ -183,6 +187,7 @@ type PageProps = {
   resting: boolean;
   docked: boolean;
   glowRoom: number;
+  height: number;
   rows: number | undefined;
   geometry: RefObject<SidebarGeometry> | undefined;
   onListHeight: (height: number) => void;
@@ -190,18 +195,60 @@ type PageProps = {
   onScrollY: (y: number) => void;
 };
 
-function SidebarPage({ profileId, slot, width, current, resting, docked, glowRoom, rows, geometry, onListHeight, onScrollView, onScrollY }: PageProps) {
+function SidebarPage({ profileId, slot, width, current, resting, docked, glowRoom, height, rows, geometry, onListHeight, onScrollView, onScrollY }: PageProps) {
   const windowId = useWindowId();
   const topGap = listTopGap(useAddressBarInSidebar());
   const pageStyle = usePageStyle(windowId, slot, width);
+  const [lazy] = useState(() => switchOn("lazySidebarRows"));
+  const [beside, setBeside] = useState(() => startsOffScreen(lazy, current));
+  useEffect(() => {
+    if (!beside) return;
+    const frame = requestAnimationFrame(() => setBeside(false));
+    return () => cancelAnimationFrame(frame);
+  }, [beside]);
+  const offScreen = beside && !current;
+  const tiles = useBrowser((s) => (offScreen ? NONE : sidebarEntries(s, windowId, profileId).tiles));
+  const innerWidth = width - layout.sidebarInset * 2;
+  const dragging = useDragging() && current;
+  const previewed = usePinnedCount(tiles);
+  const dockRoom = height ? height * DOCK_SHARE - topGap - SCROLL_EDGE.gap - SCROLL_EDGE.line : Infinity;
+  const gridHeight = (count: number) => pinGridHeight(count, innerWidth, layout.pinnedHeight);
+  const placedFixed = useRef(true);
+  if (!dragging) placedFixed.current = !tiles.length || gridHeight(tiles.length) <= dockRoom;
+  const dockFixed = placedFixed.current;
+  const capped = dockFixed && dragging && gridHeight(previewed) > dockRoom;
+  const fixedTiles = dockFixed ? tiles : NONE;
+  const scrolledTiles = dockFixed ? NONE : tiles;
+  const room = fixedTiles.length ? 0 : glowRoom;
+  const pad = room + SCROLL_EDGE.inset;
+  if (geometry) {
+    geometry.current.room = room;
+    geometry.current.pad = pad;
+    geometry.current.tilesFixed = dockFixed;
+  }
+  const scrollEdge = useScrollEdge();
   const scrollY = useRef(new Animated.Value(0)).current;
+  const isCurrent = useRef(current);
+  isCurrent.current = current;
   const [onScroll] = useState(() =>
     Animated.event([{ nativeEvent: { contentOffset: { y: scrollY } } }], {
       useNativeDriver: true,
-      listener: (e: NativeSyntheticEvent<NativeScrollEvent>) => onScrollY(e.nativeEvent.contentOffset.y),
+      listener: (e: NativeSyntheticEvent<NativeScrollEvent>) => {
+        scrollEdge.follow(e.nativeEvent.contentOffset.y);
+        if (isCurrent.current) onScrollY(e.nativeEvent.contentOffset.y);
+      },
     }),
   );
-  const edge = scrollY.interpolate({ inputRange: [0, Math.max(1, topGap)], outputRange: [0, glowRoom], extrapolate: "clamp" });
+  const edge = useMemo(() => scrollY.interpolate({ inputRange: [0, 1], outputRange: [0, room], extrapolate: "clamp" }), [scrollY, room]);
+  const fixed = useRef({ height: 0, list: 0 });
+  const reportList = (list: number) => {
+    fixed.current.list = list;
+    onListHeight(fixed.current.height + list);
+  };
+  const onFixedLayout = (e: LayoutChangeEvent) => {
+    fixed.current.height = e.nativeEvent.layout.height;
+    if (current && fixed.current.list) onListHeight(fixed.current.height + fixed.current.list);
+  };
   const inlineNewTab = !current || !docked;
 
   return (
@@ -214,43 +261,53 @@ function SidebarPage({ profileId, slot, width, current, resting, docked, glowRoo
           <DragScope enabled={current}>
             <PageContent>
               {(controller) => (
-                <Animated.View style={{ flex: 1, overflow: "hidden", transform: [{ translateY: edge }] }}>
-                  <Animated.View style={{ flex: 1, transform: [{ translateY: Animated.multiply(edge, -1) }] }}>
-                    <Animated.ScrollView
-                      ref={current ? onScrollView : undefined}
-                      onLayout={
-                        geometry
-                          ? (e) => {
-                              geometry.current.viewport = e.nativeEvent.layout.height;
-                              geometry.current.laidOut?.();
-                            }
-                          : undefined
-                      }
-                      style={{ flex: 1 }}
-                      showsVerticalScrollIndicator={false}
-                      scrollEventThrottle={16}
-                      onScroll={current ? onScroll : undefined}
-                      contentContainerStyle={{ flexGrow: 1, width, paddingHorizontal: layout.sidebarInset, paddingTop: glowRoom }}
-                    >
-                      <PageRows
-                        windowId={windowId}
-                        profileId={profileId}
-                        current={current}
-                        rows={rows}
-                        inlineNewTab={inlineNewTab}
-                        glowRoom={glowRoom}
-                        topGap={topGap}
-                        innerWidth={width - layout.sidebarInset * 2}
-                        controller={controller}
-                        geometry={geometry}
-                        onListHeight={onListHeight}
-                      />
-                      <ContextMenuArea style={{ flexGrow: 1, minHeight: inlineNewTab ? 24 : 0 }} onContextMenu={() => void openSidebarMenu(windowId)}>
-                        <WindowDragRegion style={{ flex: 1 }} titleBarDoubleClick={false} onRegionDoubleClick={() => toggleNewTabBar(windowId) || useBrowser.getState().newTab(windowId)} />
-                      </ContextMenuArea>
-                    </Animated.ScrollView>
+                <TilesPlacement controller={controller} fixed={dockFixed} room={dockRoom}>
+                  <View onLayout={onFixedLayout} style={{ paddingTop: glowRoom }}>
+                    <View style={[{ paddingHorizontal: layout.sidebarInset }, capped ? { maxHeight: topGap + dockRoom, overflow: "hidden" } : null]}>
+                      {dockFixed ? <PinnedGrid tabs={fixedTiles} innerWidth={innerWidth} /> : null}
+                    </View>
+                    <View style={{ height: fixedTiles.length ? SCROLL_EDGE.gap : topGap - SCROLL_EDGE.inset - SCROLL_EDGE.line }} />
+                    <ScrollEdgeLine opacity={scrollEdge.opacity} />
+                  </View>
+                  <Animated.View style={{ flex: 1, marginTop: -room, overflow: "hidden", transform: [{ translateY: edge }] }}>
+                    <Animated.View style={{ flex: 1, transform: [{ translateY: Animated.multiply(edge, -1) }] }}>
+                      <Animated.ScrollView
+                        ref={current ? onScrollView : undefined}
+                        onLayout={
+                          geometry
+                            ? (e) => {
+                                geometry.current.viewport = e.nativeEvent.layout.height;
+                                geometry.current.laidOut?.();
+                              }
+                            : undefined
+                        }
+                        style={{ flex: 1 }}
+                        showsVerticalScrollIndicator={false}
+                        scrollEventThrottle={16}
+                        onScroll={onScroll}
+                        contentContainerStyle={{ flexGrow: 1, width, paddingHorizontal: layout.sidebarInset, paddingTop: pad }}
+                      >
+                        <PageRows
+                          windowId={windowId}
+                          profileId={profileId}
+                          current={current}
+                          rows={rows}
+                          lazy={lazy}
+                          offScreen={offScreen}
+                          tiles={scrolledTiles}
+                          innerWidth={innerWidth}
+                          inlineNewTab={inlineNewTab}
+                          controller={controller}
+                          geometry={geometry}
+                          onListHeight={reportList}
+                        />
+                        <ContextMenuArea style={{ flexGrow: 1, minHeight: inlineNewTab ? 24 : 0 }} onContextMenu={() => void openSidebarMenu(windowId)}>
+                          <WindowDragRegion style={{ flex: 1 }} titleBarDoubleClick={false} onRegionDoubleClick={() => toggleNewTabBar(windowId) || useBrowser.getState().newTab(windowId)} />
+                        </ContextMenuArea>
+                      </Animated.ScrollView>
+                    </Animated.View>
                   </Animated.View>
-                </Animated.View>
+                </TilesPlacement>
               )}
             </PageContent>
           </DragScope>
@@ -265,32 +322,25 @@ type PageRowsProps = {
   profileId: string;
   current: boolean;
   rows: number | undefined;
-  inlineNewTab: boolean;
-  glowRoom: number;
-  topGap: number;
+  lazy: boolean;
+  offScreen: boolean;
+  tiles: string[];
   innerWidth: number;
+  inlineNewTab: boolean;
   controller: ReturnType<typeof useDragController>;
   geometry: RefObject<SidebarGeometry> | undefined;
   onListHeight: (height: number) => void;
 };
 
-function PageRows({ windowId, profileId, current, rows, inlineNewTab, glowRoom, topGap, innerWidth, controller, geometry, onListHeight }: PageRowsProps) {
+function PageRows({ windowId, profileId, current, rows, lazy, offScreen, tiles, innerWidth, inlineNewTab, controller, geometry, onListHeight }: PageRowsProps) {
   const [captured] = useState(newCapture);
-  const { tiles, pinnedRows, pinnedGroups, list: all } = useBrowser((s) => {
+  const { pinnedRows, pinnedGroups, list: all } = useBrowser((s) => {
     const entries = sidebarEntries(s, windowId, profileId);
     return capture(captured, s, entries.list, entries);
   });
-  const [lazy] = useState(() => switchOn("lazySidebarRows"));
   const [mountedRows, setMountedRows] = useState(() => firstPaintEntries(useBrowser.getState(), windowId, profileId, all, lazy));
   const [visited, setVisited] = useState(current);
   if (current && !visited) setVisited(true);
-  const [beside, setBeside] = useState(() => startsOffScreen(lazy, current));
-  useEffect(() => {
-    if (!beside) return;
-    const frame = requestAnimationFrame(() => setBeside(false));
-    return () => cancelAnimationFrame(frame);
-  }, [beside]);
-  const offScreen = beside && !current;
   const cap = offScreen ? 0 : visited ? undefined : rows;
   const growing = cap === undefined && mountedRows < all.length;
   useEffect(() => {
@@ -317,17 +367,17 @@ function PageRows({ windowId, profileId, current, rows, inlineNewTab, glowRoom, 
     <ListMotionContext.Provider value={scope}>
       <View
         onLayout={(e) => {
-          measured.current = e.nativeEvent.layout.height + glowRoom - (inlineNewTab ? ROW_PITCH : 0);
+          measured.current = e.nativeEvent.layout.height + SCROLL_EDGE.inset - (inlineNewTab ? ROW_PITCH : 0);
           if (current) onListHeight(measured.current);
         }}
       >
-        <PinnedGrid tabs={offScreen ? NONE : tiles} innerWidth={innerWidth} />
+        {tiles.length ? <PinnedGrid tabs={tiles} innerWidth={innerWidth} flush /> : null}
         <View
           ref={(v) => {
             controller?.regions.set("pinnedGroups", v);
           }}
           onLayout={geometry ? (e) => void (geometry.current.regions.pinnedGroups = e.nativeEvent.layout.y) : undefined}
-          style={{ marginTop: tiles.length ? 6 : topGap, gap: layout.rowGap }}
+          style={{ marginTop: tiles.length ? 6 : 0, gap: layout.rowGap }}
         >
           {(offScreen ? NONE : pinnedRows).map((id) => (
             <TabRowItem key={id} tabId={id} section="pinnedRows" />
@@ -367,6 +417,14 @@ function PageRows({ windowId, profileId, current, rows, inlineNewTab, glowRoom, 
   );
 }
 
+function TilesPlacement({ controller, fixed, room, children }: { controller: ReturnType<typeof useDragController>; fixed: boolean; room: number; children: ReactNode }) {
+  if (controller) {
+    controller.tilesFixed = fixed;
+    controller.tilesRoom = room;
+  }
+  return <>{children}</>;
+}
+
 function PageContent({ children }: { children: (controller: ReturnType<typeof useDragController>) => ReactNode }) {
   return <>{children(useDragController())}</>;
 }
@@ -383,9 +441,9 @@ const Tail = memo(function Tail({ id, section }: { id: string; section: "list" |
   return <Animated.View ref={wrapper.ref} style={wrapper.style} />;
 });
 
-type SidebarGeometry = { viewport: number; regions: Record<Section, number>; newTabAtTop: boolean; laidOut?: () => void };
+type SidebarGeometry = { viewport: number; regions: Record<Section, number>; newTabAtTop: boolean; room: number; pad: number; tilesFixed: boolean; laidOut?: () => void };
 
-function useRevealTabs(windowId: string, scroll: RefObject<ScrollView | null>, scrollY: RefObject<number>, geometry: RefObject<SidebarGeometry>, glowRoom: number) {
+function useRevealTabs(windowId: string, scroll: RefObject<ScrollView | null>, scrollY: RefObject<number>, geometry: RefObject<SidebarGeometry>) {
   useEffect(() => {
     let switched: string | null = null;
     let opened: string | null = null;
@@ -393,8 +451,8 @@ function useRevealTabs(windowId: string, scroll: RefObject<ScrollView | null>, s
     let reveals = 0;
     const show = (y: number, height: number) => {
       const top = scrollY.current ?? 0;
-      const viewport = geometry.current.viewport;
-      if (y - top < glowRoom) scroll.current?.scrollTo({ y: Math.max(0, y - glowRoom), animated: true });
+      const { viewport, room, pad } = geometry.current;
+      if (y - top < room) scroll.current?.scrollTo({ y: Math.max(0, y - pad), animated: true });
       else if (y + height - top > viewport - 8) scroll.current?.scrollTo({ y: y + height - viewport + 8, animated: true });
     };
     const reveal = () => {
@@ -406,9 +464,11 @@ function useRevealTabs(windowId: string, scroll: RefObject<ScrollView | null>, s
       const s = useBrowser.getState();
       const profileId = s.windows[windowId]?.profileId;
       if (!tabId || !profileId) return;
+      const pinned = s.tabs[tabId];
+      if (geometry.current.tilesFixed && pinned?.pinned && !pinned.pinnedAsRow) return;
       const { regions, newTabAtTop } = geometry.current;
       const span = rowSpan(s, windowId, profileId, tabId, newTabAtTop);
-      if (span) return show(glowRoom + regions[span.section] + span.top, span.height);
+      if (span) return show(geometry.current.pad + regions[span.section] + span.top, span.height);
       const view = scroll.current as unknown as View;
       void measureRow(windowId, tabId).then((row) =>
         view.measureInWindow((_x, y) => row && mine === reveals && show(row.y - y + (scrollY.current ?? 0), row.height)),
@@ -435,7 +495,7 @@ function useRevealTabs(windowId: string, scroll: RefObject<ScrollView | null>, s
       unsubscribe();
       geometry.current.laidOut = undefined;
     };
-  }, [windowId, glowRoom]);
+  }, [windowId]);
 }
 
 function DownloadsButton({ windowId }: { windowId: string }) {

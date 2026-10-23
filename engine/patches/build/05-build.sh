@@ -2,8 +2,9 @@
 # Step 5: compile at normal priority; autoninja picks the job count (JOBS overrides).
 # -k 0 keeps going past failures so one pass surfaces every broken file.
 set -euo pipefail
-source ~/chromium-build/scripts/env.sh
-"$CB/scripts/game-resource.sh"
+source "$(dirname "$0")/step-guard.sh" "$@"
+source "$(dirname "$0")/env.sh"
+CHROMIUM_SRC="$CB/chromium_git/chromium/src" "$(dirname "$0")/game-resource.sh" --apply
 cd "$CB/chromium_git/chromium/src"
 # ArdiaCore is Chrome's own framework (the app stages it from out/Release_GN_arm64).
 TARGETS="${TARGETS:-chrome_framework}"

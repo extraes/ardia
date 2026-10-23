@@ -18,6 +18,8 @@ source_set("core") {
     "ac_cast_dialog.h",
     "ac_cast_dialog.mm",
     "ac_content_hooks.h",
+    "ac_contents_background.h",
+    "ac_contents_background.mm",
     "ac_context_menu.h",
     "ac_context_menu.mm",
     "ac_desktop_capture.h",
@@ -81,6 +83,7 @@ source_set("core") {
 
   deps = [
     "//base",
+    "//chrome/app:branded_strings",
     "//chrome/app:command_ids",
     "//chrome/app:generated_resources",
     "//chrome/browser",

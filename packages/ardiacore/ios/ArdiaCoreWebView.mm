@@ -606,6 +606,7 @@ static BOOL HeldSelector(SEL selector) {
   ACPageFocus _pageFocus;
   __weak NSView *_focusedDevTools;
   BOOL _focusOnActivate;
+  BOOL _keepsOutgoingFocus;
   CFTimeInterval _focusActivatedAt;
   __weak NSWindow *_focusActivatedIn;
 }
@@ -884,10 +885,6 @@ static void ExpireLaunchTab(ArdiaCoreTab *tab) {
   return _tab ? ardiacore_host::BrowserId(_tab) : 0;
 }
 
-- (int)chromeTabId {
-  return _tab ? _tab.tabId : 0;
-}
-
 - (ArdiaCoreWindowController *)controller {
   return [ArdiaCoreWindowController forNSWindow:self.window];
 }
@@ -1137,6 +1134,7 @@ static void ExpireLaunchTab(ArdiaCoreTab *tab) {
   [self applyPainting];
   if (_muted && [tab respondsToSelector:@selector(setMuted:)]) tab.muted = YES;
   if (_pageBackgroundColor && [tab respondsToSelector:@selector(setPageBackgroundColor:)]) tab.pageBackgroundColor = _pageBackgroundColor;
+  if (_contentsBackgroundColor && [tab respondsToSelector:@selector(setContentsBackgroundColor:)]) tab.contentsBackgroundColor = _contentsBackgroundColor;
   if (_pageColor && [tab respondsToSelector:@selector(setPageColor:)]) tab.pageColor = _pageColor;
   if (_pendingURL) {
     [self loadNow:_pendingURL userInitiated:_pendingUserInitiated];
@@ -1517,12 +1515,45 @@ static BOOL InTabPage(NSView *view) {
   return NO;
 }
 
++ (void)installOutgoingFocusSnapshots {
+  static id snapshots, ends;
+  if (snapshots) return;
+  NSNotificationCenter *center = NSNotificationCenter.defaultCenter;
+  snapshots = [center addObserverForName:@"ArdiaOutgoingFocus" object:nil queue:nil usingBlock:^(NSNotification *note) {
+    if (ArdiaCoreWebView *view = [ArdiaCoreWebView holding:note.object]) {
+      [view storePageFocusFrom:note.object];
+      view->_keepsOutgoingFocus = YES;
+    }
+  }];
+  ends = [center addObserverForName:@"ArdiaFocusHandoffEnded" object:nil queue:nil usingBlock:^(NSNotification *note) {
+    if (ArdiaCoreWebView *view = [ArdiaCoreWebView holding:note.object]) view->_keepsOutgoingFocus = NO;
+  }];
+}
+
++ (ArdiaCoreWebView *)holding:(id)responder {
+  NSView *outgoing = [responder isKindOfClass:NSView.class] ? responder : nil;
+  for (ArdiaCoreWebView *view in LiveViews().allObjects)
+    if (outgoing && view.window == outgoing.window && [outgoing isDescendantOf:view]) return view;
+  return nil;
+}
+
 - (void)storePageFocus {
+  NSResponder *responder = self.window.firstResponder;
+  const BOOL unfocused = !responder || responder == self.window;
+  const BOOL snapshotted = _keepsOutgoingFocus;
+  _keepsOutgoingFocus = NO;
+  if (snapshotted && unfocused) {
+    _focusOnActivate = NO;
+    return;
+  }
+  [self storePageFocusFrom:responder];
+}
+
+- (void)storePageFocusFrom:(NSResponder *)responder {
   _focusOnActivate = NO;
   _focusedDevTools = nil;
   NSWindow *window = self.window;
   if (!window || !_tab) return;
-  NSResponder *responder = window.firstResponder;
   NSView *view = [responder isKindOfClass:NSView.class] ? (NSView *)responder : nil;
   if (view && _tab.view && [view isDescendantOf:_tab.view]) {
     _pageFocus = ACPageFocus::Page;
@@ -1743,6 +1774,11 @@ static NSView *SharedAncestor(NSView *a, NSView *b) {
 - (void)setPageBackgroundColor:(NSColor *)color {
   _pageBackgroundColor = color;
   if ([_tab respondsToSelector:@selector(setPageBackgroundColor:)]) _tab.pageBackgroundColor = color;
+}
+
+- (void)setContentsBackgroundColor:(NSColor *)color {
+  _contentsBackgroundColor = color;
+  if ([_tab respondsToSelector:@selector(setContentsBackgroundColor:)]) _tab.contentsBackgroundColor = color;
 }
 
 - (void)setPageColor:(NSString *)color {
@@ -2333,10 +2369,6 @@ static NSEventModifierFlags PeekModifierFlag() {
   return NO;
 }
 
-- (void)loadOpenedURL:(NSInteger)openedId url:(NSString *)url {
-  [self loadURL:url userInitiated:NO];
-}
-
 - (void)goBack {
   [_tab goBack];
 }
@@ -2592,13 +2624,6 @@ static NSEventModifierFlags PeekModifierFlag() {
   if ([_tab respondsToSelector:@selector(resolveAutofillPrompt:action:)]) [_tab resolveAutofillPrompt:promptId action:action];
 }
 
-- (void)setTabStripIndex:(NSInteger)index pinned:(BOOL)pinned {
-  _tabIndex = index;
-  _pinned = pinned;
-  if (_tab) [ArdiaCoreTabStrip setPinned:pinned tab:_tab];
-  [self placeTab];
-}
-
 - (NSString *)executeExtensionAction:(NSString *)extensionId {
   return [_tab respondsToSelector:@selector(executeExtensionAction:)] ? [_tab executeExtensionAction:extensionId] : nil;
 }
@@ -2740,7 +2765,6 @@ namespace {
 
 int gDevTrackpad = -1;
 NSUInteger gZoomScrolls = 0;
-NSUInteger gSwitchPrewarms = 0;
 constexpr NSTimeInterval kSwitchPrewarmGapSeconds = 0.1;
 
 bool SwitchPrewarmOff() {
@@ -2811,7 +2835,6 @@ bool CommandScrollZooms(NSEvent *event, bool trackpad) {
   if (target) {
     [target callFrame:@"" kind:@"wakeFrames" json:@"{}"];
     [lastByDisplay setObject:@(event.timestamp) forKey:display];
-    gSwitchPrewarms++;
     return YES;
   }
   return NO;
@@ -2824,32 +2847,6 @@ bool CommandScrollZooms(NSEvent *event, bool trackpad) {
     [ArdiaCoreWebView prewarmForMouseEvent:event];
     return event;
   }];
-}
-
-+ (NSDictionary<NSString *, id> *)devSwitchPrewarm:(int)browserId at:(NSString *)where {
-  ArdiaCoreWebView *view = nil;
-  for (ArdiaCoreWebView *v in LiveViews())
-    if (v.window && v.canWakeFrames &&
-        (!browserId || ardiacore_host::BrowserId(v->_tab) == browserId))
-      view = v;
-  if (!view) return @{@"woke" : @NO, @"reason" : @"no shown page"};
-  NSWindow *window = view.window;
-  const NSRect frame = [view convertRect:view.bounds toView:nil];
-  const NSRect bounds = window.contentView.bounds;
-  const NSPoint point = [where isEqualToString:@"titlebar"] ? NSMakePoint(NSMidX(bounds), NSMaxY(bounds) - 6)
-                        : [where isEqualToString:@"edge"]   ? NSMakePoint(1, NSMidY(bounds))
-                                                            : NSMakePoint(MAX(1, NSMinX(frame) - 8), NSMidY(frame));
-  NSEvent *event = [NSEvent mouseEventWithType:NSEventTypeLeftMouseDown location:point modifierFlags:0
-                                     timestamp:NSProcessInfo.processInfo.systemUptime windowNumber:window.windowNumber
-                                       context:nil eventNumber:0 clickCount:1 pressure:1];
-  const NSUInteger before = gSwitchPrewarms;
-  const CFTimeInterval start = CACurrentMediaTime();
-  const BOOL woke = !SwitchPrewarmOff() && [ArdiaCoreWebView prewarmForMouseEvent:event];
-  const double micros = (CACurrentMediaTime() - start) * 1e6;
-  return @{
-    @"woke" : @(woke), @"prewarms" : @(gSwitchPrewarms), @"counted" : @(gSwitchPrewarms > before), @"off" : @(SwitchPrewarmOff()),
-    @"micros" : @(micros)
-  };
 }
 
 + (void)installScrollZoom {

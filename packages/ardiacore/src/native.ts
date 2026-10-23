@@ -66,7 +66,6 @@ export const Cef = requireNativeModule<{
   removeExternalAppAllowance(profile: string, origin: string, scheme: string): Promise<void>;
   clearBrowsingData(profile: string, types: BrowsingDataType[], since: number | null): Promise<void>;
   fetchFavicon(url: string, profile: string): Promise<FaviconImage | null>;
-  removeLegacyFavicons(profile: string): Promise<void>;
   engineCall(name: string, profile: string, args: string | null): Promise<string>;
   releaseProfile(profile: string): Promise<void>;
   deleteProfileData(profile: string): Promise<{ remaining: string[] }>;

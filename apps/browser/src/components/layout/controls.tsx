@@ -52,15 +52,15 @@ export function ToolbarButton({
         position: hit ? "absolute" : "relative",
         left: hit?.plateX,
         top: hit?.plateY,
-        width: box,
-        height: box,
-        borderRadius: radius,
+        width: hit?.box ?? box,
+        height: hit?.box ?? box,
+        borderRadius: hit?.radius ?? radius,
         alignItems: "center",
         justifyContent: "center",
         backgroundColor: disabled ? undefined : pressed || active ? palette.pressed : hovered ? palette.hover : undefined,
       }}
     >
-      <Symbol name={icon} size={size} weight={weight} color={color ?? (disabled ? palette.iconDisabled : palette.icon)} style={{ width: box, height: box }} />
+      <Symbol name={icon} size={size} weight={weight} color={color ?? (disabled ? palette.iconDisabled : palette.icon)} style={{ width: hit?.box ?? box, height: hit?.box ?? box }} />
     </View>
   );
   const button = (
@@ -82,7 +82,7 @@ export function ToolbarButton({
   );
 }
 
-export type ButtonHit = { width: number; height: number; plateX: number; plateY: number };
+export type ButtonHit = { width: number; height: number; plateX: number; plateY: number; box?: number; radius?: number };
 
 export const POPOVER_MARGIN = 8;
 

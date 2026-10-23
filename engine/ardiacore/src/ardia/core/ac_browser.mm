@@ -47,6 +47,7 @@
 #include "third_party/blink/public/common/loader/resource_type_util.h"
 #include "third_party/blink/public/mojom/loader/resource_load_info.mojom.h"
 #include "ardia/core/ac_hooks.h"
+#include "ardia/core/ac_contents_background.h"
 #include "ardia/core/ac_desktop_capture.h"
 #include "ardia/core/ac_extension_shortcuts.h"
 #include "ardia/core/ac_fake_media.h"
@@ -71,6 +72,7 @@
 #include "ui/views/widget/widget_delegate.h"
 #include "ui/views/window/client_view.h"
 #include "url/origin.h"
+#include "url/url_constants.h"
 
 namespace ardiacore {
 
@@ -613,6 +615,9 @@ bool IsNotifyingNavigation() {
 }
 
 void InitialMainDocumentAccessed(content::WebContents* contents) {
+  if (contents) {
+    EndAheadBlank(contents);
+  }
   TabBridge* bridge = contents ? TabBridge::FromWebContents(contents) : nullptr;
   if (!bridge) {
     return;
@@ -956,6 +961,9 @@ content::WebContents* ACWebContentsDelegate::OpenURLFromTab(
     const content::OpenURLParams& params,
     base::OnceCallback<void(content::NavigationHandle&)>
         navigation_handle_callback) {
+  if (source && params.url.SchemeIs(url::kJavaScriptScheme)) {
+    EndAheadBlank(source);
+  }
   if (IsAppURL(params.url)) {
     if (source && IsWebUIURL(source->GetLastCommittedURL())) {
       ReportAppURLRequest(source, params.url, params.user_gesture);

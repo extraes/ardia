@@ -197,4 +197,5 @@ finding before acting on it. Check the agent's diff yourself before you open the
 
 ## License
 
-Ardia is Apache-2.0. By contributing you agree your work is released under it.
+Ardia's own files are Apache-2.0, and Ardia as distributed is GPL-3.0 (see NOTICE). By contributing you agree your
+work is released under Apache-2.0, and so may ship in the GPL-3.0 app.
